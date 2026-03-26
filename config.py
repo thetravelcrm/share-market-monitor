@@ -5,23 +5,32 @@
 
 # ── RSS News Sources (global + Indian) ───────────────────────
 NEWS_FEEDS = {
-    # Indian sources
+    # ── Indian sources ────────────────────────────────────────
     "Economic Times Markets":    "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
     "Economic Times Stocks":     "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
     "Economic Times Companies":  "https://economictimes.indiatimes.com/companies/rssfeeds/2143429.cms",
+    "Economic Times Commodities":"https://economictimes.indiatimes.com/markets/commodities/rssfeeds/1957340.cms",
+    "Economic Times Economy":    "https://economictimes.indiatimes.com/economy/rssfeeds/1373380680.cms",
     "Moneycontrol Markets":      "https://www.moneycontrol.com/rss/marketreports.xml",
     "Moneycontrol Business":     "https://www.moneycontrol.com/rss/business.xml",
+    "Moneycontrol Results":      "https://www.moneycontrol.com/rss/results.xml",
     "Business Standard Markets": "https://www.business-standard.com/rss/markets-106.rss",
     "Business Standard Economy": "https://www.business-standard.com/rss/economy-policy-102.rss",
+    "Business Standard Companies":"https://www.business-standard.com/rss/companies-101.rss",
     "Mint Markets":              "https://www.livemint.com/rss/markets",
     "Mint Companies":            "https://www.livemint.com/rss/companies",
+    "Mint Money":                "https://www.livemint.com/rss/money",
     "Financial Express Market":  "https://www.financialexpress.com/market/feed/",
     "NDTV Profit":               "https://feeds.feedburner.com/NdtvProfit-LatestNews",
-    # Global sources (used for macro impact on Indian market)
+    "Hindu Business Line":       "https://www.thehindubusinessline.com/markets/stock-markets/?service=rss",
+    "Zee Business":              "https://zeebiz.com/markets/rss",
+    # ── Global macro (impact on Indian market) ───────────────
     "Reuters Business":          "https://feeds.reuters.com/reuters/businessNews",
     "Reuters Markets":           "https://feeds.reuters.com/reuters/UKmarkets",
     "CNBC Markets":              "https://www.cnbc.com/id/20910258/device/rss/rss.html",
     "Bloomberg Markets":         "https://feeds.bloomberg.com/markets/news.rss",
+    "FT Markets":                "https://www.ft.com/markets?format=rss",
+    "Investing.com India":       "https://in.investing.com/rss/news_25.rss",
 }
 
 # ── Impact Thresholds ─────────────────────────────────────────

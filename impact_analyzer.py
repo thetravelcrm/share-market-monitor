@@ -52,7 +52,43 @@ class ImpactResult:
 
 
 def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
-    """Fetch live/latest price data from Yahoo Finance."""
+    """Fetch live/latest price data. Uses Kite Connect if configured, else yfinance."""
+    # Try Kite Connect first (real-time NSE data)
+    _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
+    if symbol not in _MCX_SYMBOLS:
+        try:
+            from kite_fetcher import get_quote
+            kq = get_quote(symbol)
+            if kq:
+                # We still need 20d avg volume — use yfinance hist for that only
+                avg_vol = kq["volume"]
+                try:
+                    import yfinance as _yf
+                    _h = _yf.Ticker(f"{symbol}.NS").history(period="22d", interval="1d", auto_adjust=True)
+                    if len(_h) >= 20:
+                        avg_vol = int(_h["Volume"].iloc[-20:].mean())
+                        h52w = float(_h["High"].max())
+                        l52w = float(_h["Low"].min())
+                    else:
+                        h52w = kq["high"]; l52w = kq["low"]
+                except Exception:
+                    h52w = kq["high"]; l52w = kq["low"]
+                vol_ratio = round(kq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
+                return PriceData(
+                    symbol=symbol,
+                    current_price=round(kq["last_price"], 2),
+                    prev_close=round(kq["prev_close"], 2),
+                    day_change_pct=kq["change_pct"],
+                    day_volume=kq["volume"],
+                    avg_volume_20d=avg_vol,
+                    volume_ratio=vol_ratio,
+                    high_52w=round(h52w, 2),
+                    low_52w=round(l52w, 2),
+                    market_cap_cr=0,
+                    currency="INR",
+                )
+        except Exception:
+            pass  # fall through to yfinance
     # MCX commodity futures → use commodity ETF proxies on Yahoo Finance
     _MCX_PROXY = {
         "SILVERMIC":  "SI=F",       # Silver Futures (COMEX)

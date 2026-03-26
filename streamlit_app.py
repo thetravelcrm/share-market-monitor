@@ -41,7 +41,7 @@ section[data-testid="stSidebar"] > div { background: #141829; }
 /* ── Header ── */
 .dash-header {
     background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
-    padding: 18px 28px;
+    padding: 64px 28px 18px 28px;
     border-bottom: 2px solid #00d4ff;
     display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;
 }
@@ -326,8 +326,8 @@ if auto_refresh:
 #  Header
 # ═══════════════════════════════════════════════════════════════
 mkt_status, mkt_color = market_status()
-ist_now = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%d %b %Y  %H:%M IST")
-utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+ist_now    = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%d %b %Y  %H:%M IST")
+refresh_ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%H:%M IST")
 
 st.markdown(
     f"""
@@ -347,7 +347,7 @@ st.markdown(
           <strong>IST Time</strong>{ist_now}
         </div>
         <div class="status-pill">
-          <strong>Last Refresh</strong>{utc_now}
+          <strong>Last Refresh</strong>{refresh_ist}
         </div>
       </div>
     </div>
