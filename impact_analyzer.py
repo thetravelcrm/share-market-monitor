@@ -52,7 +52,40 @@ class ImpactResult:
 
 
 def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
-    """Fetch live/latest price data from Yahoo Finance."""
+    """Fetch live/latest price data. Uses Fyers API if configured, else yfinance."""
+    _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
+    if symbol not in _MCX_SYMBOLS:
+        try:
+            from fyers_fetcher import get_quote
+            fq = get_quote(symbol)
+            if fq:
+                # Use yfinance only for 20-day avg volume and 52-week range
+                avg_vol = fq["volume"]
+                h52w = fq["high"]; l52w = fq["low"]
+                try:
+                    _h = yf.Ticker(f"{symbol}.NS").history(period="22d", interval="1d", auto_adjust=True)
+                    if len(_h) >= 20:
+                        avg_vol = int(_h["Volume"].iloc[-20:].mean())
+                        h52w = float(_h["High"].max())
+                        l52w = float(_h["Low"].min())
+                except Exception:
+                    pass
+                vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
+                return PriceData(
+                    symbol=symbol,
+                    current_price=round(fq["last_price"], 2),
+                    prev_close=round(fq["prev_close"], 2),
+                    day_change_pct=fq["change_pct"],
+                    day_volume=fq["volume"],
+                    avg_volume_20d=avg_vol,
+                    volume_ratio=vol_ratio,
+                    high_52w=round(h52w, 2),
+                    low_52w=round(l52w, 2),
+                    market_cap_cr=0,
+                    currency="INR",
+                )
+        except Exception:
+            pass  # fall through to yfinance
     # MCX commodity futures → use commodity ETF proxies on Yahoo Finance
     _MCX_PROXY = {
         "SILVERMIC":  "SI=F",       # Silver Futures (COMEX)
