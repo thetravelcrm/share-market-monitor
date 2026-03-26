@@ -311,14 +311,15 @@ with st.sidebar:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Auto-refresh
+#  Auto-refresh  (native – no external package needed)
 # ═══════════════════════════════════════════════════════════════
 if auto_refresh:
-    try:
-        from streamlit_autorefresh import st_autorefresh
-        st_autorefresh(interval=refresh_mins * 60 * 1000, key="ar")
-    except ImportError:
-        pass
+    import time as _time
+    _last = st.session_state.get("_ar_last", 0)
+    if _time.time() - _last >= refresh_mins * 60:
+        st.session_state["_ar_last"] = _time.time()
+        do_run()
+        st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════
