@@ -53,10 +53,21 @@ class ImpactResult:
 
 def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
     """Fetch live/latest price data from Yahoo Finance."""
-    # Yahoo Finance suffix for NSE → .NS, BSE → .BO, US stocks no suffix
-    us_symbols = {"AAPL", "MSFT", "NVDA", "AMZN", "GOOGL"}
-    if symbol in us_symbols:
-        ticker_sym = symbol
+    # MCX commodity futures → use commodity ETF proxies on Yahoo Finance
+    _MCX_PROXY = {
+        "SILVERMIC":  "SI=F",       # Silver Futures (COMEX)
+        "GOLDM":      "GC=F",       # Gold Futures (COMEX)
+        "CRUDEOIL":   "CL=F",       # Crude Oil WTI Futures
+        "NATURALGAS": "NG=F",       # Natural Gas Futures
+        "COPPER":     "HG=F",       # Copper Futures
+        "ZINC":       "ZNC=F",      # Zinc (LME proxy)
+        "ALUMINIUM":  "ALI=F",      # Aluminium Futures
+        "NICKEL":     "NI=F",       # Nickel
+        "LEAD":       "LE=F",       # Lead
+    }
+    # ETFs on NSE have .NS suffix too
+    if symbol in _MCX_PROXY:
+        ticker_sym = _MCX_PROXY[symbol]
         currency = "USD"
     else:
         ticker_sym = f"{symbol}.NS"
