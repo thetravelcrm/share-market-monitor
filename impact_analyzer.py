@@ -56,8 +56,10 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
     _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
     if symbol not in _MCX_SYMBOLS:
         try:
+            import streamlit as _st
+            _token = _st.session_state.get("fyers_token", "")
             from fyers_fetcher import get_quote
-            fq = get_quote(symbol)
+            fq = get_quote(symbol, _token) if _token else None
             if fq:
                 # Use yfinance only for 20-day avg volume and 52-week range
                 avg_vol = fq["volume"]

@@ -299,10 +299,44 @@ with st.sidebar:
     only_signals = st.checkbox("With signals only")
 
     st.markdown("---")
+
+    # ── Fyers Live Data connection ─────────────────────────────
+    try:
+        from fyers_fetcher import is_configured, get_auth_url, exchange_auth_code
+        if is_configured():
+            # Check if auth_code came back in URL after Fyers login
+            qp = st.query_params
+            if "auth_code" in qp and "fyers_token" not in st.session_state:
+                token = exchange_auth_code(qp["auth_code"])
+                if token:
+                    st.session_state["fyers_token"] = token
+                    st.query_params.clear()
+                    st.rerun()
+
+            if st.session_state.get("fyers_token"):
+                st.markdown(
+                    "<div style='color:#00ff88;font-size:12px;font-weight:600'>✅ Fyers Live Data ON</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("🔌 Disconnect Fyers", use_container_width=True):
+                    del st.session_state["fyers_token"]
+                    st.rerun()
+            else:
+                st.markdown(
+                    "<div style='color:#a8b0d0;font-size:12px;font-weight:600'>📡 Fyers Real-Time Prices</div>",
+                    unsafe_allow_html=True,
+                )
+                auth_url = get_auth_url()
+                st.link_button("🔗 Connect Fyers", auth_url, use_container_width=True)
+                st.caption("Log in once — token lasts till midnight")
+    except Exception:
+        pass
+
+    st.markdown("---")
     st.markdown(
         "<div style='font-size:11px;color:#6b7280;line-height:1.7'>"
         "📡 Sources: ET · Moneycontrol · BS · Mint · Reuters · CNBC<br>"
-        "📊 Prices: Yahoo Finance (NSE / US)<br>"
+        "📊 Prices: Fyers (live) / Yahoo Finance (fallback)<br>"
         "🧠 NLP: VADER + Finance Lexicon<br><br>"
         "⚠️ Not financial advice."
         "</div>",

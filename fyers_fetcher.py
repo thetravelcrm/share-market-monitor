@@ -1,91 +1,93 @@
 # ─────────────────────────────────────────────────────────────
 #  fyers_fetcher.py  –  Fyers API live price/volume (FREE)
 #
-#  Auto-refreshes the access token daily using TOTP + PIN.
-#  No manual steps needed once secrets are configured.
-#
-#  Add to Streamlit Cloud → Settings → Secrets:
-#    FYERS_CLIENT_ID  = "IFT522ZFF6-100"
-#    FYERS_SECRET_KEY = "UZDMXT07DG"
-#    FYERS_USER_ID    = "XY1234"
-#    FYERS_PIN        = "1234"
-#    FYERS_TOTP_KEY   = "JBSWY3DPEHPK3PXP"
+#  OAuth flow — no TOTP needed:
+#    1. Add to Streamlit Cloud → Settings → Secrets:
+#         FYERS_CLIENT_ID  = "IFT522ZFF6-100"
+#         FYERS_SECRET_KEY = "UZDMXT07DG"
+#    2. In your Fyers API dashboard, set Redirect URI to:
+#         https://arshadshare.streamlit.app
+#    3. In the app sidebar, click "Connect Fyers" → log in normally
+#       The app auto-captures the auth code from the redirect URL.
+#    Token lasts until midnight; reconnect next morning with one click.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 from typing import Optional
-import time
 
-_fyers       = None
-_token_ts    = 0.0          # epoch when token was last fetched
-_TOKEN_TTL   = 23 * 3600    # refresh every 23 hours (tokens expire at midnight)
+REDIRECT_URI = "https://arshadshare.streamlit.app"
 
 
-def _secrets() -> dict:
+def _secrets() -> tuple[str, str]:
+    """Return (client_id, secret_key) from Streamlit secrets."""
     try:
         import streamlit as st
-        return {
-            "client_id":  st.secrets.get("FYERS_CLIENT_ID", ""),
-            "secret_key": st.secrets.get("FYERS_SECRET_KEY", ""),
-            "user_id":    st.secrets.get("FYERS_USER_ID", ""),
-            "pin":        st.secrets.get("FYERS_PIN", ""),
-            "totp_key":   st.secrets.get("FYERS_TOTP_KEY", ""),
-        }
+        return (
+            st.secrets.get("FYERS_CLIENT_ID", ""),
+            st.secrets.get("FYERS_SECRET_KEY", ""),
+        )
     except Exception:
-        return {}
+        return "", ""
 
 
-def _is_configured(s: dict) -> bool:
-    return all(s.get(k) for k in ("client_id", "secret_key", "user_id", "pin", "totp_key"))
+def is_configured() -> bool:
+    cid, sk = _secrets()
+    return bool(cid and sk)
 
 
-def _init_fyers(force: bool = False):
-    """Return a live FyersModel, refreshing the token when needed."""
-    global _fyers, _token_ts
-    s = _secrets()
-    if not _is_configured(s):
-        return None
+def get_auth_url() -> str:
+    """Generate the Fyers login URL to send the user to."""
+    from fyers_apiv3 import fyersModel
+    cid, sk = _secrets()
+    session = fyersModel.SessionModel(
+        client_id=cid,
+        secret_key=sk,
+        redirect_uri=REDIRECT_URI,
+        response_type="code",
+        grant_type="authorization_code",
+    )
+    return session.generate_authcode()
 
-    age = time.time() - _token_ts
-    if _fyers is not None and not force and age < _TOKEN_TTL:
-        return _fyers
 
+def exchange_auth_code(auth_code: str) -> Optional[str]:
+    """Exchange an auth code (from redirect URL) for an access token."""
     try:
-        from fyers_auth import get_access_token
         from fyers_apiv3 import fyersModel
-        token = get_access_token(
-            client_id  = s["client_id"],
-            secret_key = s["secret_key"],
-            user_id    = s["user_id"],
-            pin        = s["pin"],
-            totp_key   = s["totp_key"],
+        cid, sk = _secrets()
+        session = fyersModel.SessionModel(
+            client_id=cid,
+            secret_key=sk,
+            redirect_uri=REDIRECT_URI,
+            response_type="code",
+            grant_type="authorization_code",
         )
-        _fyers    = fyersModel.FyersModel(
-            client_id=s["client_id"],
-            is_async=False,
-            token=token,
-            log_path="",
-        )
-        _token_ts = time.time()
-        return _fyers
-    except Exception as e:
-        print(f"[Fyers] token refresh failed: {e}")
+        session.set_token(auth_code)
+        resp = session.generate_token()
+        if resp.get("code") == 200:
+            return resp["access_token"]
+        return None
+    except Exception:
         return None
 
 
-def is_available() -> bool:
-    return _is_configured(_secrets())
+def get_fyers_model(access_token: str):
+    """Return a FyersModel ready for API calls."""
+    from fyers_apiv3 import fyersModel
+    cid, _ = _secrets()
+    return fyersModel.FyersModel(
+        client_id=cid,
+        is_async=False,
+        token=access_token,
+        log_path="",
+    )
 
 
-def get_quote(symbol: str) -> Optional[dict]:
+def get_quote(symbol: str, access_token: str) -> Optional[dict]:
     """
     Fetch live NSE quote via Fyers API.
     Returns dict with: last_price, volume, change_pct, prev_close, high, low, open
-    Returns None if Fyers not configured or symbol not found.
     """
-    fyers = _init_fyers()
-    if fyers is None:
-        return None
     try:
+        fyers = get_fyers_model(access_token)
         resp = fyers.quotes({"symbols": f"NSE:{symbol}-EQ"})
         if resp.get("code") != 200:
             return None
