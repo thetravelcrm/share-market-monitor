@@ -524,7 +524,7 @@ with tab_impact:
                 yaxis=dict(gridcolor="#252a45", ticksuffix="%", tickfont=dict(color="#a8b0d0")),
                 margin=dict(t=40, b=20, l=40, r=20), height=320,
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
 
             # Impact score gauge row
             st.markdown("<div style='margin-top:8px'>", unsafe_allow_html=True)
@@ -622,7 +622,7 @@ with tab_opps:
                 "Horizon":   sig.time_horizon,
             } for _, imp, sig in result.underreacted]
             if rows:
-                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -798,7 +798,7 @@ with tab_sectors:
                 yaxis=dict(gridcolor="#252a45", ticksuffix="%"),
                 margin=dict(t=20,b=80,l=40,r=20), height=370,
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
 
             # Bubble chart
             heat_rows = []
@@ -828,7 +828,7 @@ with tab_sectors:
                 coloraxis_colorbar=dict(ticksuffix="%"),
                 margin=dict(t=40,b=30,l=50,r=20), height=320,
             )
-            st.plotly_chart(fig2, width='stretch')
+            st.plotly_chart(fig2, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -889,7 +889,7 @@ with tab_news:
                             "Expected": f"{r.expected_move_pct:+.1f}%",
                             "Status":   {"Underreacted":"👉","Overreacted":"⚠️","Reacted":"✅"}.get(r.reaction_status,"") + " " + r.reaction_status,
                         } for r in show_rows]
-                        st.dataframe(pd.DataFrame(df_rows), width='stretch',
+                        st.dataframe(pd.DataFrame(df_rows), use_container_width=True,
                                      hide_index=True, height=min(38*len(df_rows)+40, 220))
 
 
