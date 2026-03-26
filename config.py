@@ -381,7 +381,6 @@ STOCK_UNIVERSE = {
 
     # ── CONSUMER DURABLES / RETAIL ───────────────────────────
     "TITAN":      {"name":"Titan Company",         "sector":"Consumer","keywords":["titan","tanishq","titan watch"]},
-    "TATACONSUM": {"name":"Tata Consumer",         "sector":"Consumer","keywords":["tata consumer","tata tea"]},
     "DMART":      {"name":"Avenue Supermarts (DMart)","sector":"Retail","keywords":["dmart","avenue supermarts","d-mart"]},
     "TRENT":      {"name":"Trent (Westside)",      "sector":"Retail","keywords":["trent","westside","zudio"]},
     "SHOPERSTOP": {"name":"Shopper's Stop",        "sector":"Retail","keywords":["shoppers stop","shoperstop"]},

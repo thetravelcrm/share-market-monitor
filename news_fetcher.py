@@ -44,7 +44,7 @@ def _clean_html(text: str) -> str:
     """Strip HTML tags from text."""
     try:
         from bs4 import BeautifulSoup
-        return BeautifulSoup(text, "lxml").get_text(" ", strip=True)
+        return BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
     except Exception:
         import re
         return re.sub(r"<[^>]+>", " ", text)
