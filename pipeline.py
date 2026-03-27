@@ -31,6 +31,12 @@ class PipelineResult:
     # all flat direct matches (for sector rotation)
     flat_impacts:    list[tuple[str, ImpactResult]]                             = field(default_factory=list)
     warnings:        list[str]                                                  = field(default_factory=list)
+    # NSE market data
+    fii_dii:             Optional[dict]  = None
+    bulk_deals:          list[dict]      = field(default_factory=list)
+    block_deals:         list[dict]      = field(default_factory=list)
+    corporate_events:    list[dict]      = field(default_factory=list)
+    nifty_data:          Optional[dict]  = None
 
 
 def run_pipeline(
@@ -44,6 +50,19 @@ def run_pipeline(
     needed to render either a CLI dashboard or a Streamlit UI.
     """
     result = PipelineResult(run_time=datetime.now(tz=timezone.utc), items_total=0, items_analyzed=0)
+
+    # ── 0. NSE market data (non-blocking, all silent-fail) ────
+    if progress_cb: progress_cb("Fetching NSE market data…", 0.02)
+    try:
+        from nse_data import fetch_fii_dii, fetch_bulk_deals, fetch_block_deals, \
+                             fetch_corporate_events, fetch_gift_nifty
+        result.fii_dii          = fetch_fii_dii()
+        result.bulk_deals       = fetch_bulk_deals()
+        result.block_deals      = fetch_block_deals()
+        result.corporate_events = fetch_corporate_events(days_ahead=7)
+        result.nifty_data       = fetch_gift_nifty()
+    except Exception:
+        pass
 
     # ── 1. Fetch & dedup ──────────────────────────────────────
     if progress_cb: progress_cb("Fetching news feeds…", 0.05)

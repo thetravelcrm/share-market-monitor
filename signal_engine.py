@@ -120,20 +120,21 @@ def _confidence_score(
     reaction: str,
 ) -> int:
     score = 0
+    direction = "BUY" if result.sentiment_label == "Positive" else "SHORT"
 
-    # Impact strength
+    # Impact strength (0–30 pts)
     score += {"EXTREME": 30, "HIGH": 22, "MEDIUM": 14, "LOW": 6}.get(result.impact_strength, 0)
 
-    # Sentiment alignment
+    # Sentiment alignment (0–15 pts)
     score += {"Positive": 15, "Negative": 15, "Neutral": 0}.get(result.sentiment_label, 0)
 
-    # Underreaction bonus
+    # Underreaction bonus (0–20 pts)
     if reaction == "Underreacted":
         score += 20
     elif reaction == "Reacted":
         score += 8
 
-    # R:R quality
+    # R:R quality (0–15 pts)
     if rr >= 3.0:
         score += 15
     elif rr >= 2.0:
@@ -141,19 +142,49 @@ def _confidence_score(
     elif rr >= 1.5:
         score += 5
 
-    # Volume confirmation
+    # Volume confirmation (0–10 pts)
     if vol_ratio >= 2.0:
         score += 10
     elif vol_ratio >= 1.5:
         score += 5
 
-    # Direct match boost
+    # Direct match boost (0–10 pts)
     if result.relation == "Direct":
         score += 10
     elif result.relation == "Sectoral":
         score += 4
 
-    return min(score, 100)
+    # ── Technical Analysis bonuses / penalties ────────────────
+    tech = result.price_data.technical if result.price_data else None
+    if tech:
+        # Oversold RSI on BUY — strong entry confirmation (+15 pts)
+        if direction == "BUY" and tech.rsi_14 < 35:
+            score += 15
+        # Overbought RSI on SHORT — strong entry confirmation (+15 pts)
+        elif direction == "SHORT" and tech.rsi_14 > 65:
+            score += 15
+
+        # Near support on BUY (+10 pts)
+        if direction == "BUY" and tech.near_support:
+            score += 10
+        # Near resistance on SHORT (+10 pts)
+        elif direction == "SHORT" and tech.near_resistance:
+            score += 10
+
+        # Trend confirms direction (+8 pts)
+        if (direction == "BUY"   and tech.trend == "Uptrend") or \
+           (direction == "SHORT" and tech.trend == "Downtrend"):
+            score += 8
+        # Trend opposes direction — penalty (-10 pts)
+        elif (direction == "BUY"   and tech.trend == "Downtrend") or \
+             (direction == "SHORT" and tech.trend == "Uptrend"):
+            score -= 10
+
+        # Bollinger Band squeeze — breakout imminent (+5 pts)
+        if tech.bb_squeeze:
+            score += 5
+
+    return max(0, min(score, 100))
 
 
 def _time_horizon(result: ImpactResult) -> str:
@@ -173,6 +204,15 @@ def _build_rationale(result, rr, conf, horizon, edge) -> str:
     parts.append(f"vol ratio {result.volume_ratio:.1f}x")
     parts.append(f"R:R {rr:.1f}")
     parts.append(f"edge: {edge}")
+    tech = result.price_data.technical if result.price_data else None
+    if tech:
+        parts.append(f"RSI {tech.rsi_14:.0f} ({tech.trend})")
+        if tech.near_support:
+            parts.append("near support ✓")
+        if tech.near_resistance:
+            parts.append("near resistance ✓")
+        if tech.bb_squeeze:
+            parts.append("BB squeeze ⚡")
     return " | ".join(parts)
 
 

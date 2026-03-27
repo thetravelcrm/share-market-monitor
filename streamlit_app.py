@@ -470,12 +470,16 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
-tab_impact, tab_opps, tab_signals, tab_sectors, tab_news = st.tabs([
+tab_impact, tab_opps, tab_signals, tab_sectors, tab_news, \
+tab_nse, tab_journal, tab_backtest = st.tabs([
     "🔥 Top Impacted",
     "⚡ Underreacted",
     "🎯 Trade Signals",
     "📈 Sector Sentiment",
     "📰 News Feed",
+    "📊 NSE Data",
+    "📓 Trade Journal",
+    "🔬 Backtest",
 ])
 
 
@@ -695,11 +699,46 @@ with tab_signals:
             for item, imp, sig in signals:
                 sym      = cur_sym(imp.price_data)
                 is_under = imp.reaction_status == "Underreacted"
+                tech     = imp.price_data.technical if imp.price_data else None
+
+                # ── RSI badge ──────────────────────────────────
+                rsi_html = ""
+                if tech:
+                    rsi_color = "#00ff88" if tech.rsi_14 < 35 else ("#ff4455" if tech.rsi_14 > 65 else "#a8b0d0")
+                    rsi_label = "Oversold" if tech.rsi_14 < 35 else ("Overbought" if tech.rsi_14 > 65 else "Neutral")
+                    trend_icon = {"Uptrend": "↑", "Downtrend": "↓", "Sideways": "→"}.get(tech.trend, "→")
+                    rsi_html = (
+                        f'<span style="background:rgba(255,255,255,0.05);border:1px solid {rsi_color};'
+                        f'color:{rsi_color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                        f'RSI {tech.rsi_14:.0f} {rsi_label}</span> '
+                        f'<span style="background:rgba(255,255,255,0.05);border:1px solid #a8b0d0;'
+                        f'color:#a8b0d0;padding:2px 8px;border-radius:4px;font-size:11px">'
+                        f'{trend_icon} {tech.trend}</span> '
+                    )
+                    if tech.near_support:
+                        rsi_html += '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">📍 Near Support</span> '
+                    if tech.near_resistance:
+                        rsi_html += '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">📍 Near Resistance</span> '
+                    if tech.bb_squeeze:
+                        rsi_html += '<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">⚡ BB Squeeze</span>'
+
+                # ── Corporate event warning ────────────────────
+                event_html = ""
+                corp_events = getattr(result, "corporate_events", [])
+                sym_events  = [e for e in corp_events if e.get("symbol","").upper() == imp.symbol.upper()]
+                if sym_events:
+                    ev = sym_events[0]
+                    event_html = (
+                        f'<div style="background:rgba(255,170,51,0.12);border:1px solid #ffaa33;'
+                        f'border-radius:6px;padding:6px 10px;margin:6px 0;font-size:11px;color:#ffaa33">'
+                        f'⚠️ <b>{ev["purpose"]}</b> — {ev["ex_date"]} '
+                        f'({ev["days_away"]} day{"s" if ev["days_away"]!=1 else ""} away) — trade cautiously</div>'
+                    )
+
                 price_html = ""
                 if sig.entry_low > 0:
                     price_html = (
-                        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;'
-                        f'margin:10px 0 8px">'
+                        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0 8px">'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Entry</div>'
                         f'<div style="font-weight:700">{sym}{sig.entry_low:,.2f}–{sym}{sig.entry_high:,.2f}</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Stop Loss</div>'
@@ -719,6 +758,8 @@ with tab_signals:
                 imp_cls = {"EXTREME":"badge-extreme","HIGH":"badge-high",
                            "MEDIUM":"badge-medium","LOW":"badge-low"}.get(imp.impact_strength,"badge-teal")
 
+                # ── Log to journal button ──────────────────────
+                log_key = f"log_{sig.symbol}_{item.published.timestamp():.0f}"
                 st.markdown(
                     f'<div class="{card_class}">'
                     f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">'
@@ -734,6 +775,8 @@ with tab_signals:
                     f'  {badge(sig.edge_type, "badge-teal")}'
                     f'  {badge(imp.sector, "badge-gold")}'
                     f'</div>'
+                    f'<div style="margin:4px 0 6px">{rsi_html}</div>'
+                    f'{event_html}'
                     f'{price_html}'
                     f'<div style="display:flex;align-items:center;gap:16px;margin-top:8px">'
                     f'  <div><span style="color:#6b7280;font-size:11px">CONFIDENCE &nbsp;</span>'
@@ -745,6 +788,13 @@ with tab_signals:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                if sig.entry_low > 0:
+                    if st.button(f"📓 Log to Journal", key=log_key):
+                        from trade_journal import add_trade
+                        add_trade(sig.symbol, sig.name, sig.action,
+                                  sig.entry_low, sig.stop_loss, sig.target1, sig.target2,
+                                  sig.risk_reward, sig.confidence, sig.edge_type)
+                        st.success(f"✅ {sig.symbol} logged to Trade Journal")
 
         with sub1: render_signal_cards(buys,   "signal-card-buy")
         with sub2: render_signal_cards(shorts,  "signal-card-short")
@@ -926,6 +976,236 @@ with tab_news:
                         } for r in show_rows]
                         st.dataframe(pd.DataFrame(df_rows), use_container_width=True,
                                      hide_index=True, height=min(38*len(df_rows)+40, 220))
+
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 6  —  NSE Data (FII/DII, Bulk/Block Deals, Corp Events)
+# ───────────────────────────────────────────────────────────────
+with tab_nse:
+    # ── Nifty + FII/DII header row ────────────────────────────
+    hc1, hc2, hc3 = st.columns(3, gap="medium")
+
+    nifty = result.nifty_data
+    with hc1:
+        if nifty:
+            chg_col = "#00ff88" if nifty["nifty_change"] >= 0 else "#ff4455"
+            st.markdown(
+                f'<div class="card"><div class="card-title">📈 Nifty 50</div>'
+                f'<div style="font-size:28px;font-weight:700;color:#ffd700">{nifty["nifty_close"]:,.2f}</div>'
+                f'<div style="font-size:14px;color:{chg_col};font-weight:600">{nifty["nifty_change"]:+.2f}% today</div>'
+                f'<div style="font-size:11px;color:#6b7280;margin-top:4px">Source: {nifty["source"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+        else:
+            st.info("Nifty data unavailable")
+
+    fii = result.fii_dii
+    with hc2:
+        if fii:
+            fii_col = "#00ff88" if fii["fii_net"] >= 0 else "#ff4455"
+            st.markdown(
+                f'<div class="card"><div class="card-title">🏦 FII Activity</div>'
+                f'<div style="font-size:22px;font-weight:700;color:{fii_col}">₹{fii["fii_net"]:,.0f} Cr</div>'
+                f'<div style="font-size:11px;color:#a8b0d0">Buy ₹{fii["fii_buy"]:,.0f}  |  Sell ₹{fii["fii_sell"]:,.0f}</div>'
+                f'<div style="font-size:13px;color:{fii_col};font-weight:600;margin-top:4px">{fii["sentiment"]} ({fii["date"]})</div>'
+                f'</div>', unsafe_allow_html=True)
+        else:
+            st.info("FII data unavailable")
+
+    with hc3:
+        if fii:
+            dii_col = "#00ff88" if fii["dii_net"] >= 0 else "#ff4455"
+            st.markdown(
+                f'<div class="card"><div class="card-title">🏛 DII Activity</div>'
+                f'<div style="font-size:22px;font-weight:700;color:{dii_col}">₹{fii["dii_net"]:,.0f} Cr</div>'
+                f'<div style="font-size:11px;color:#a8b0d0">Buy ₹{fii["dii_buy"]:,.0f}  |  Sell ₹{fii["dii_sell"]:,.0f}</div>'
+                f'</div>', unsafe_allow_html=True)
+        else:
+            st.info("DII data unavailable")
+
+    # ── Corporate Events ──────────────────────────────────────
+    st.markdown('<div class="card"><div class="card-title">📅 Upcoming Corporate Events (next 7 days)</div>',
+                unsafe_allow_html=True)
+    if result.corporate_events:
+        ev_rows = [{"Symbol": e["symbol"], "Company": e["company"],
+                    "Event": e["purpose"], "Date": e["ex_date"],
+                    "Days Away": e["days_away"]} for e in result.corporate_events]
+        st.dataframe(pd.DataFrame(ev_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No upcoming corporate events found or NSE API unavailable.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Bulk Deals ────────────────────────────────────────────
+    col_bulk, col_block = st.columns(2, gap="medium")
+    with col_bulk:
+        st.markdown('<div class="card"><div class="card-title">📦 Bulk Deals (Today)</div>',
+                    unsafe_allow_html=True)
+        if result.bulk_deals:
+            bdf = pd.DataFrame(result.bulk_deals)[["symbol","client","buy_sell","qty","price"]]
+            bdf.columns = ["Symbol","Client","B/S","Qty","Price"]
+            st.dataframe(bdf, use_container_width=True, hide_index=True)
+        else:
+            st.info("No bulk deals today or NSE API unavailable.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_block:
+        st.markdown('<div class="card"><div class="card-title">🧱 Block Deals (Today)</div>',
+                    unsafe_allow_html=True)
+        if result.block_deals:
+            bldf = pd.DataFrame(result.block_deals)[["symbol","client","buy_sell","qty","price"]]
+            bldf.columns = ["Symbol","Client","B/S","Qty","Price"]
+            st.dataframe(bldf, use_container_width=True, hide_index=True)
+        else:
+            st.info("No block deals today or NSE API unavailable.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 7  —  Trade Journal
+# ───────────────────────────────────────────────────────────────
+with tab_journal:
+    from trade_journal import load_journal, save_journal, get_stats, to_csv_bytes, from_csv_bytes, add_trade
+
+    df_j = load_journal()
+    stats = get_stats(df_j)
+
+    # ── Stats row ─────────────────────────────────────────────
+    js1, js2, js3, js4, js5 = st.columns(5, gap="small")
+    js1.metric("Total Trades",  stats["total"])
+    js2.metric("Open",          stats["open"])
+    js3.metric("Win Rate",      f"{stats['win_rate']}%")
+    js4.metric("Avg P&L",       f"{stats['avg_pnl']:+.1f}%")
+    js5.metric("Best Trade",    f"{stats['best']:+.1f}%")
+
+    st.markdown("---")
+
+    # ── Manual trade entry ────────────────────────────────────
+    with st.expander("➕ Log a trade manually"):
+        jc1, jc2, jc3 = st.columns(3)
+        j_sym   = jc1.text_input("Symbol",  key="j_sym")
+        j_name  = jc2.text_input("Name",    key="j_name")
+        j_act   = jc3.selectbox("Action", ["BUY","SHORT"], key="j_act")
+        jc4, jc5, jc6 = st.columns(3)
+        j_entry = jc4.number_input("Entry Price",  value=0.0, key="j_entry")
+        j_sl    = jc5.number_input("Stop Loss",    value=0.0, key="j_sl")
+        j_t1    = jc6.number_input("Target 1",     value=0.0, key="j_t1")
+        jc7, jc8 = st.columns(2)
+        j_t2    = jc7.number_input("Target 2",     value=0.0, key="j_t2")
+        j_rr    = jc8.number_input("R:R Ratio",    value=1.5, key="j_rr")
+        j_notes = st.text_input("Notes", key="j_notes")
+        if st.button("Log Trade", type="primary"):
+            if j_sym and j_entry > 0:
+                add_trade(j_sym, j_name, j_act, j_entry, j_sl, j_t1, j_t2, j_rr, 0, "Manual", j_notes)
+                st.success(f"✅ {j_sym} logged!")
+                st.rerun()
+
+    # ── Journal table (editable) ──────────────────────────────
+    if df_j.empty:
+        st.info("No trades logged yet. Click '📓 Log to Journal' on any Trade Signal card above.")
+    else:
+        st.markdown("**Edit results below** — set Result to WIN / LOSS / BREAK-EVEN and add exit price.")
+        edited = st.data_editor(df_j, use_container_width=True, hide_index=False, num_rows="dynamic",
+                                column_config={
+                                    "result":    st.column_config.SelectboxColumn("Result",
+                                                   options=["Open","WIN","LOSS","BREAK-EVEN"]),
+                                    "action":    st.column_config.SelectboxColumn("Action",
+                                                   options=["BUY","SHORT"]),
+                                })
+        if st.button("💾 Save Changes"):
+            save_journal(edited)
+            st.success("Saved!")
+
+    st.markdown("---")
+    # ── Export / Import ───────────────────────────────────────
+    ec1, ec2 = st.columns(2)
+    with ec1:
+        if not df_j.empty:
+            st.download_button("⬇️ Export Journal CSV", to_csv_bytes(df_j),
+                               "trade_journal.csv", "text/csv")
+    with ec2:
+        uploaded = st.file_uploader("⬆️ Import Journal CSV", type="csv", key="j_upload")
+        if uploaded:
+            imported = from_csv_bytes(uploaded.read())
+            save_journal(imported)
+            st.success(f"Imported {len(imported)} trades!")
+            st.rerun()
+
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 8  —  Backtest
+# ───────────────────────────────────────────────────────────────
+with tab_backtest:
+    from trade_journal import load_journal
+    from backtester import run_backtest, backtest_stats
+
+    bt_df_j = load_journal()
+
+    st.markdown('<div class="card"><div class="card-title">🔬 Signal Backtest — Did past signals work?</div>',
+                unsafe_allow_html=True)
+
+    if bt_df_j.empty:
+        st.info("No trades in your journal yet. Log signals from the Trade Signals tab first, then run the backtest here.")
+    else:
+        bc1, bc2 = st.columns([2, 1])
+        with bc2:
+            bt_horizon = st.slider("Hold period (trading days)", 1, 10, 5, key="bt_horizon")
+            run_bt = st.button("▶ Run Backtest", type="primary", use_container_width=True)
+
+        if run_bt or st.session_state.get("bt_result") is not None:
+            if run_bt:
+                prog_bt = st.progress(0, text="Running backtest…")
+                def bt_cb(step, pct):
+                    prog_bt.progress(min(pct, 1.0), text=step)
+                bt_result = run_backtest(bt_df_j, horizon_days=bt_horizon, progress_cb=bt_cb)
+                prog_bt.empty()
+                st.session_state["bt_result"] = bt_result
+            else:
+                bt_result = st.session_state["bt_result"]
+
+            bstats = backtest_stats(bt_result)
+            if bstats:
+                bs1, bs2, bs3, bs4, bs5 = st.columns(5)
+                bs1.metric("Trades Tested",  bstats["total"])
+                bs2.metric("Win Rate",        f"{bstats['win_rate']}%")
+                bs3.metric("Wins / Losses",   f"{bstats['wins']} / {bstats['losses']}")
+                bs4.metric("Avg Return",      f"{bstats['avg_return']:+.1f}%")
+                bs5.metric("Best / Worst",    f"{bstats['best']:+.1f}% / {bstats['worst']:+.1f}%")
+
+                if bstats.get("by_edge"):
+                    st.markdown("**Win rate by edge type:**")
+                    edge_cols = st.columns(len(bstats["by_edge"]))
+                    for col, (edge, wr) in zip(edge_cols, bstats["by_edge"].items()):
+                        col.metric(edge, f"{wr}%")
+
+                # ── Equity curve ──────────────────────────────
+                if "actual_return_pct" in bt_result.columns:
+                    closed_bt = bt_result[bt_result["outcome"].isin(["WIN","LOSS","BREAK-EVEN"])].copy()
+                    if not closed_bt.empty:
+                        closed_bt["cumulative"] = pd.to_numeric(
+                            closed_bt["actual_return_pct"], errors="coerce").fillna(0).cumsum()
+                        fig_bt = px.line(
+                            closed_bt.reset_index(), x="index", y="cumulative",
+                            title="Cumulative Return (%)",
+                            labels={"index": "Trade #", "cumulative": "Cumulative Return %"},
+                            color_discrete_sequence=["#00d4ff"],
+                        )
+                        fig_bt.add_hline(y=0, line_dash="dash", line_color="#ff4455", opacity=0.5)
+                        fig_bt.update_layout(
+                            plot_bgcolor="#1a1f3a", paper_bgcolor="#141829",
+                            font=dict(color="#a8b0d0"),
+                            title=dict(font=dict(color="#00d4ff",size=13)),
+                            xaxis=dict(gridcolor="#252a45"),
+                            yaxis=dict(gridcolor="#252a45", ticksuffix="%"),
+                            margin=dict(t=40,b=30,l=50,r=20), height=300,
+                        )
+                        st.plotly_chart(fig_bt, use_container_width=True)
+
+                # ── Results table ─────────────────────────────
+                show_cols = ["symbol","action","entry","target2","stop_loss","outcome",
+                             "actual_return_pct","hit_target","hit_stop"]
+                show_cols = [c for c in show_cols if c in bt_result.columns]
+                st.dataframe(bt_result[show_cols], use_container_width=True, hide_index=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ── Footer ────────────────────────────────────────────────────

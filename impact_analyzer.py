@@ -16,6 +16,7 @@ from config import IMPACT_THRESHOLDS, HISTORICAL_REACTIONS, UNDERREACTION
 from news_fetcher import NewsItem
 from sentiment_analyzer import SentimentResult
 from stock_mapper import StockMatch
+from technical_analyzer import TechnicalData, compute_technicals
 
 warnings.filterwarnings("ignore")
 
@@ -33,6 +34,7 @@ class PriceData:
     low_52w: float
     market_cap_cr: float    # in crore INR (or USD for globals)
     currency: str
+    technical: Optional[TechnicalData] = None   # RSI, SMA, support/resistance
 
 
 @dataclass
@@ -52,8 +54,10 @@ class ImpactResult:
 
 
 def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
-    """Fetch live/latest price data. Uses Fyers API if configured, else yfinance."""
+    """Fetch live/latest price data. Uses Fyers API if connected, else yfinance."""
     _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
+
+    # ── Try Fyers for NSE stocks ───────────────────────────────
     if symbol not in _MCX_SYMBOLS:
         try:
             import streamlit as _st
@@ -61,15 +65,16 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
             from fyers_fetcher import get_quote
             fq = get_quote(symbol, _token) if _token else None
             if fq:
-                # Use yfinance only for 20-day avg volume and 52-week range
                 avg_vol = fq["volume"]
                 h52w = fq["high"]; l52w = fq["low"]
+                tech = None
                 try:
-                    _h = yf.Ticker(f"{symbol}.NS").history(period="22d", interval="1d", auto_adjust=True)
+                    _h = yf.Ticker(f"{symbol}.NS").history(period="60d", interval="1d", auto_adjust=True)
                     if len(_h) >= 20:
                         avg_vol = int(_h["Volume"].iloc[-20:].mean())
                         h52w = float(_h["High"].max())
                         l52w = float(_h["Low"].min())
+                        tech = compute_technicals(_h, fq["last_price"])
                 except Exception:
                     pass
                 vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
@@ -85,22 +90,23 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
                     low_52w=round(l52w, 2),
                     market_cap_cr=0,
                     currency="INR",
+                    technical=tech,
                 )
         except Exception:
             pass  # fall through to yfinance
-    # MCX commodity futures → use commodity ETF proxies on Yahoo Finance
+
+    # ── MCX commodity futures → COMEX proxies ─────────────────
     _MCX_PROXY = {
-        "SILVERMIC":  "SI=F",       # Silver Futures (COMEX)
-        "GOLDM":      "GC=F",       # Gold Futures (COMEX)
-        "CRUDEOIL":   "CL=F",       # Crude Oil WTI Futures
-        "NATURALGAS": "NG=F",       # Natural Gas Futures
-        "COPPER":     "HG=F",       # Copper Futures
-        "ZINC":       "ZNC=F",      # Zinc (LME proxy)
-        "ALUMINIUM":  "ALI=F",      # Aluminium Futures
-        "NICKEL":     "NI=F",       # Nickel
-        "LEAD":       "LE=F",       # Lead
+        "SILVERMIC":  "SI=F",
+        "GOLDM":      "GC=F",
+        "CRUDEOIL":   "CL=F",
+        "NATURALGAS": "NG=F",
+        "COPPER":     "HG=F",
+        "ZINC":       "ZNC=F",
+        "ALUMINIUM":  "ALI=F",
+        "NICKEL":     "NI=F",
+        "LEAD":       "LE=F",
     }
-    # ETFs on NSE have .NS suffix too
     if symbol in _MCX_PROXY:
         ticker_sym = _MCX_PROXY[symbol]
         currency = "USD"
@@ -109,8 +115,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
         currency = "INR"
 
     try:
-        tk = yf.Ticker(ticker_sym)
-        hist = tk.history(period="22d", interval="1d", auto_adjust=True)
+        tk   = yf.Ticker(ticker_sym)
+        hist = tk.history(period="60d", interval="1d", auto_adjust=True)
 
         if hist.empty or len(hist) < 2:
             return None
@@ -126,7 +132,9 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
 
         info = tk.fast_info
         mktcap_raw = getattr(info, "market_cap", 0) or 0
-        mktcap_cr  = round(mktcap_raw / 1e7, 0) if currency == "INR" else round(mktcap_raw / 1e7, 0)
+        mktcap_cr  = round(mktcap_raw / 1e7, 0)
+
+        tech = compute_technicals(hist, current)
 
         return PriceData(
             symbol=symbol,
@@ -140,6 +148,7 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
             low_52w=round(l52w, 2),
             market_cap_cr=mktcap_cr,
             currency=currency,
+            technical=tech,
         )
     except Exception:
         return None
@@ -149,12 +158,7 @@ def _calculate_impact_strength(
     sentiment: SentimentResult,
     match: StockMatch,
 ) -> tuple[str, float]:
-    """
-    Return (impact_strength_label, raw_impact_score 0-1).
-    """
     score = abs(sentiment.score)
-
-    # Direct matches boost strength
     if match.relation == "Direct":
         score = min(1.0, score * 1.4)
     elif match.relation == "Sectoral":
@@ -162,22 +166,20 @@ def _calculate_impact_strength(
     elif match.relation == "Macro":
         score = min(1.0, score * 0.5)
 
-    # Category weight boost
     category_boost = {
-        "Earnings":   0.15,
-        "Company":    0.12,
-        "Regulatory": 0.10,
-        "Macro":      0.05,
+        "Earnings":     0.15,
+        "Company":      0.12,
+        "Regulatory":   0.10,
+        "Macro":        0.05,
         "Geopolitical": 0.08,
-        "Sector":     0.04,
-        "General":    0.0,
+        "Sector":       0.04,
+        "General":      0.0,
     }
     score = min(1.0, score + category_boost.get(sentiment.category, 0))
 
     for label, threshold in IMPACT_THRESHOLDS.items():
         if score >= threshold:
             return label, score
-
     return "LOW", score
 
 
@@ -186,34 +188,21 @@ def _expected_move(
     impact: str,
     match: StockMatch,
 ) -> float:
-    """Estimate expected % move based on historical reaction table."""
-    key = (sentiment.category, sentiment.label, impact)
+    key  = (sentiment.category, sentiment.label, impact)
     base = HISTORICAL_REACTIONS.get(key, None)
-
     if base is None:
-        # Fallback: scale with sentiment score
         base = sentiment.score * 5.0
-
-    # Dampen for indirect matches
     dampener = {"Direct": 1.0, "Sectoral": 0.5, "Macro": 0.3}
     return round(base * dampener.get(match.relation, 0.5), 2)
 
 
-def _reaction_status(
-    expected: float,
-    actual: float,
-    vol_ratio: float,
-) -> str:
-    min_exp  = UNDERREACTION["min_expected_move_pct"]
-    max_act  = UNDERREACTION["max_actual_move_pct"]
-    vol_thr  = UNDERREACTION["volume_threshold"]
-
-    abs_exp = abs(expected)
-    abs_act = abs(actual)
-
-    if abs_exp >= min_exp and abs_act < max_act and vol_ratio < vol_thr:
+def _reaction_status(expected: float, actual: float, vol_ratio: float) -> str:
+    min_exp = UNDERREACTION["min_expected_move_pct"]
+    max_act = UNDERREACTION["max_actual_move_pct"]
+    vol_thr = UNDERREACTION["volume_threshold"]
+    if abs(expected) >= min_exp and abs(actual) < max_act and vol_ratio < vol_thr:
         return "Underreacted"
-    if abs_act > abs_exp * 2.0:
+    if abs(actual) > abs(expected) * 2.0:
         return "Overreacted"
     return "Reacted"
 
@@ -225,17 +214,13 @@ def analyze_impact(
     max_stocks: int = 10,
     fetch_prices: bool = True,
 ) -> list[ImpactResult]:
-    """
-    For each matched stock, fetch price data and compute impact.
-    Returns sorted list (Direct impacts first).
-    """
     results: list[ImpactResult] = []
 
     for match in matches[:max_stocks]:
         impact_label, _ = _calculate_impact_strength(sentiment, match)
         expected_move   = _expected_move(sentiment, impact_label, match)
 
-        price_data = None
+        price_data  = None
         actual_move = 0.0
         vol_ratio   = 1.0
 
@@ -244,7 +229,7 @@ def analyze_impact(
             if price_data:
                 actual_move = price_data.day_change_pct
                 vol_ratio   = price_data.volume_ratio
-            time.sleep(0.2)  # rate-limit YF requests
+            time.sleep(0.2)
 
         reaction = _reaction_status(expected_move, actual_move, vol_ratio)
 
