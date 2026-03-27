@@ -522,7 +522,9 @@ def _check_schedule() -> None:
         del log[k]
     today_log = log.setdefault(today, {})
     for label, slot_mins in _SLOTS:
-        if cur >= slot_mins and not today_log.get(label, False):
+        # Only fire within a 30-minute window of the scheduled time.
+        # Without this, opening the app at 2 PM would trigger the 9:15 slot.
+        if slot_mins <= cur < slot_mins + 30 and not today_log.get(label, False):
             today_log[label] = True   # mark before run to prevent double-fire
             do_run()
             new_result = st.session_state.get("result")
