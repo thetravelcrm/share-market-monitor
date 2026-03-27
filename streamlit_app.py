@@ -504,9 +504,11 @@ if run_btn:
 #  Scheduled Auto-Run  (IST slots: 09:15, 13:00, 15:20)
 # ═══════════════════════════════════════════════════════════════
 _SLOTS = [
-    ("09:15 IST", 9 * 60 + 15),
-    ("13:00 IST", 13 * 60 + 0),
-    ("15:20 IST", 15 * 60 + 20),
+    ("09:15 IST", 9 * 60 + 15),    # NSE open
+    ("13:00 IST", 13 * 60 + 0),    # NSE midday
+    ("15:20 IST", 15 * 60 + 20),   # NSE close
+    ("17:30 IST", 17 * 60 + 30),   # MCX evening session open
+    ("21:00 IST", 21 * 60 + 0),    # MCX metals/energy midpoint
 ]
 
 def _check_schedule() -> None:
