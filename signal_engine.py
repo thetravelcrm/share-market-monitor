@@ -184,29 +184,34 @@ def _confidence_score(
         if tech.bb_squeeze:
             score += 5
 
-        # MACD confirmation (+10 pts)
-        if direction == "BUY"   and getattr(tech, "macd_bullish", False):
-            score += 10
-        elif direction == "SHORT" and not getattr(tech, "macd_bullish", True):
-            score += 10
+        # MACD confirmation (+10 pts alignment, -10 pts contradiction)
+        # Only score if MACD data is present (macd_line != 0)
+        _macd_line = getattr(tech, "macd_line", 0.0)
+        _macd_bull = getattr(tech, "macd_bullish", False)
+        if _macd_line != 0.0:
+            if direction == "BUY"   and _macd_bull:       score += 10
+            elif direction == "BUY"   and not _macd_bull: score -= 10  # contradiction penalty
+            elif direction == "SHORT" and not _macd_bull: score += 10
+            elif direction == "SHORT" and _macd_bull:     score -= 10  # contradiction penalty
 
         # Stochastic extremes (+8 pts)
-        if direction == "BUY"   and getattr(tech, "stoch_oversold", False):
-            score += 8
-        elif direction == "SHORT" and getattr(tech, "stoch_overbought", False):
-            score += 8
+        if direction == "BUY"   and getattr(tech, "stoch_oversold",  False): score += 8
+        elif direction == "SHORT" and getattr(tech, "stoch_overbought", False): score += 8
 
         # OBV trend alignment (+5 pts)
-        if direction == "BUY"   and getattr(tech, "obv_trend", "") == "Rising":
-            score += 5
-        elif direction == "SHORT" and getattr(tech, "obv_trend", "") == "Falling":
-            score += 5
+        _obv = getattr(tech, "obv_trend", "Neutral")
+        if direction == "BUY"   and _obv == "Rising":  score += 5
+        elif direction == "SHORT" and _obv == "Falling": score += 5
 
-        # EMA(9) price position (+5 pts)
-        if direction == "BUY"   and getattr(tech, "price_above_ema9", False):
-            score += 5
-        elif direction == "SHORT" and not getattr(tech, "price_above_ema9", True):
-            score += 5
+        # EMA(9) price position (+5 pts alignment, -5 pts contradiction)
+        # Only score if EMA9 data is present (ema_9 != 0)
+        _ema9 = getattr(tech, "ema_9", 0.0)
+        _above = getattr(tech, "price_above_ema9", False)
+        if _ema9 != 0.0:
+            if direction == "BUY"   and _above:      score += 5
+            elif direction == "BUY"   and not _above: score -= 5
+            elif direction == "SHORT" and not _above: score += 5
+            elif direction == "SHORT" and _above:     score -= 5
 
     return max(0, min(score, 100))
 

@@ -3,11 +3,18 @@
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from config import STOCK_UNIVERSE, SECTOR_STOCKS
 from news_fetcher import NewsItem
 from sentiment_analyzer import SentimentResult
+
+
+def _kw_match(keyword: str, text: str) -> bool:
+    """Case-insensitive whole-word match (word boundaries).
+    Prevents 'tata' matching inside 'data', or 'ai' matching inside 'rain'."""
+    return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text, re.IGNORECASE))
 
 
 @dataclass
@@ -26,10 +33,10 @@ def map_stocks(item: NewsItem, sentiment: SentimentResult) -> list[StockMatch]:
     """
     matched: dict[str, StockMatch] = {}
 
-    # ── 1. Direct keyword match ───────────────────────────────
+    # ── 1. Direct keyword match (whole-word, case-insensitive) ──
     for symbol, meta in STOCK_UNIVERSE.items():
         for kw in meta["keywords"]:
-            if kw in item.raw_text:
+            if _kw_match(kw, item.raw_text):
                 if symbol not in matched:
                     matched[symbol] = StockMatch(
                         symbol=symbol,

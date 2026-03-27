@@ -216,23 +216,26 @@ def _calculate_impact_strength(
     match: StockMatch,
 ) -> tuple[str, float]:
     score = abs(sentiment.score)
-    if match.relation == "Direct":
-        score = min(1.0, score * 1.4)
-    elif match.relation == "Sectoral":
-        score = min(1.0, score * 0.8)
-    elif match.relation == "Macro":
-        score = min(1.0, score * 0.5)
 
-    category_boost = {
-        "Earnings":     0.15,
-        "Company":      0.12,
-        "Regulatory":   0.10,
-        "Macro":        0.05,
-        "Geopolitical": 0.08,
-        "Sector":       0.04,
-        "General":      0.0,
-    }
-    score = min(1.0, score + category_boost.get(sentiment.category, 0))
+    if match.relation == "Direct":
+        # Direct mention: amplify + allow category boost → can reach EXTREME
+        score = min(1.0, score * 1.4)
+        category_boost = {
+            "Earnings":     0.15,
+            "Company":      0.12,
+            "Regulatory":   0.10,
+            "Macro":        0.05,
+            "Geopolitical": 0.08,
+            "Sector":       0.04,
+            "General":      0.0,
+        }
+        score = min(1.0, score + category_boost.get(sentiment.category, 0))
+    elif match.relation == "Sectoral":
+        # Sector peer: dampen + cap at HIGH (0.75) — can never be EXTREME
+        score = min(0.75, score * 0.7)
+    elif match.relation == "Macro":
+        # Macro cascade: heavily dampen + cap at MEDIUM (0.55)
+        score = min(0.55, score * 0.45)
 
     for label, threshold in IMPACT_THRESHOLDS.items():
         if score >= threshold:

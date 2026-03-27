@@ -78,7 +78,8 @@ def analyze(item: NewsItem) -> SentimentResult:
 def _detect_category(text: str) -> str:
     scores: dict[str, int] = {}
     for cat, keywords in CATEGORY_KEYWORDS.items():
-        hits = sum(1 for kw in keywords if kw in text)
+        hits = sum(1 for kw in keywords
+                   if re.search(r'\b' + re.escape(kw) + r'\b', text, re.IGNORECASE))
         if hits:
             scores[cat] = hits
     if not scores:
@@ -87,9 +88,11 @@ def _detect_category(text: str) -> str:
 
 
 def _detect_macro_sectors(text: str) -> list[str]:
+    """Detect macro sectors using whole-word matching to avoid false positives.
+    Example: 'ai' must NOT match inside 'rain', 'again', 'main', etc."""
     affected: set[str] = set()
     for kw, sectors in MACRO_SECTOR_MAP.items():
-        if kw in text:
+        if re.search(r'\b' + re.escape(kw) + r'\b', text, re.IGNORECASE):
             affected.update(sectors)
     return list(affected)
 
