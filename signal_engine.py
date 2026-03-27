@@ -184,6 +184,30 @@ def _confidence_score(
         if tech.bb_squeeze:
             score += 5
 
+        # MACD confirmation (+10 pts)
+        if direction == "BUY"   and getattr(tech, "macd_bullish", False):
+            score += 10
+        elif direction == "SHORT" and not getattr(tech, "macd_bullish", True):
+            score += 10
+
+        # Stochastic extremes (+8 pts)
+        if direction == "BUY"   and getattr(tech, "stoch_oversold", False):
+            score += 8
+        elif direction == "SHORT" and getattr(tech, "stoch_overbought", False):
+            score += 8
+
+        # OBV trend alignment (+5 pts)
+        if direction == "BUY"   and getattr(tech, "obv_trend", "") == "Rising":
+            score += 5
+        elif direction == "SHORT" and getattr(tech, "obv_trend", "") == "Falling":
+            score += 5
+
+        # EMA(9) price position (+5 pts)
+        if direction == "BUY"   and getattr(tech, "price_above_ema9", False):
+            score += 5
+        elif direction == "SHORT" and not getattr(tech, "price_above_ema9", True):
+            score += 5
+
     return max(0, min(score, 100))
 
 
@@ -213,6 +237,18 @@ def _build_rationale(result, rr, conf, horizon, edge) -> str:
             parts.append("near resistance ✓")
         if tech.bb_squeeze:
             parts.append("BB squeeze ⚡")
+        if getattr(tech, "macd_bullish", None) is not None and tech.macd_line != 0.0:
+            parts.append("MACD ↑ bullish" if tech.macd_bullish else "MACD ↓ bearish")
+        if getattr(tech, "stoch_oversold", False):
+            parts.append(f"Stoch {tech.stoch_k:.0f} oversold")
+        elif getattr(tech, "stoch_overbought", False):
+            parts.append(f"Stoch {tech.stoch_k:.0f} overbought")
+        obv = getattr(tech, "obv_trend", "Neutral")
+        if obv in ("Rising", "Falling"):
+            parts.append(f"OBV {obv.lower()}")
+        atr_pct = getattr(tech, "atr_pct", 0.0)
+        if atr_pct > 2.0:
+            parts.append(f"ATR {atr_pct:.1f}% vol")
     return " | ".join(parts)
 
 

@@ -35,6 +35,52 @@ class PriceData:
     market_cap_cr: float    # in crore INR (or USD for globals)
     currency: str
     technical: Optional[TechnicalData] = None   # RSI, SMA, support/resistance
+    lot_size: int  = 1    # MCX contract lot size in base unit (1 for NSE stocks)
+    lot_unit: str  = ""   # e.g. "kg", "g", "bbl" — empty for NSE stocks
+
+
+# ── MCX commodity config (module-level for shared access) ─────
+_MCX_PROXY: dict[str, str] = {
+    "SILVERMIC":  "SI=F",
+    "GOLDM":      "GC=F",
+    "CRUDEOIL":   "CL=F",
+    "NATURALGAS": "NG=F",
+    "COPPER":     "HG=F",
+    "ZINC":       "ZNC=F",
+    "ALUMINIUM":  "ALI=F",
+    "NICKEL":     "NI=F",
+    "LEAD":       "LE=F",
+}
+
+_MCX_LOT_SIZES: dict[str, tuple[int, str]] = {
+    "SILVERMIC":  (30,   "kg"),
+    "GOLDM":      (10,   "g"),
+    "CRUDEOIL":   (100,  "bbl"),
+    "NATURALGAS": (1250, "mmbtu"),
+    "COPPER":     (250,  "kg"),
+    "ZINC":       (5000, "kg"),
+    "ALUMINIUM":  (5000, "kg"),
+    "NICKEL":     (250,  "kg"),
+    "LEAD":       (5000, "kg"),
+}
+
+# Conversion: COMEX price (USD/troy oz) → MCX price (INR/unit)
+# 1 troy oz = 31.1035 g → 1 kg = 1000/31.1035 = 32.1507 troy oz
+_MCX_CONV: dict[str, float] = {
+    "SILVERMIC": 32.1507,   # USD/oz × oz_per_kg × USD/INR = INR/kg
+    "GOLDM":     0.0321507, # USD/oz × oz_per_g  × USD/INR = INR/g
+}
+
+
+def _fetch_usd_inr() -> float:
+    """Fetch live USD/INR rate from yfinance. Falls back to 84.0."""
+    try:
+        rate = yf.Ticker("USDINR=X").fast_info.last_price
+        if rate and 60 < rate < 120:
+            return float(rate)
+    except Exception:
+        pass
+    return 84.0
 
 
 @dataclass
@@ -95,24 +141,9 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
         except Exception:
             pass  # fall through to yfinance
 
-    # ── MCX commodity futures → COMEX proxies ─────────────────
-    _MCX_PROXY = {
-        "SILVERMIC":  "SI=F",
-        "GOLDM":      "GC=F",
-        "CRUDEOIL":   "CL=F",
-        "NATURALGAS": "NG=F",
-        "COPPER":     "HG=F",
-        "ZINC":       "ZNC=F",
-        "ALUMINIUM":  "ALI=F",
-        "NICKEL":     "NI=F",
-        "LEAD":       "LE=F",
-    }
-    if symbol in _MCX_PROXY:
-        ticker_sym = _MCX_PROXY[symbol]
-        currency = "USD"
-    else:
-        ticker_sym = f"{symbol}.NS"
-        currency = "INR"
+    # ── Resolve ticker symbol ──────────────────────────────────
+    is_mcx = symbol in _MCX_PROXY
+    ticker_sym = _MCX_PROXY[symbol] if is_mcx else f"{symbol}.NS"
 
     try:
         tk   = yf.Ticker(ticker_sym)
@@ -121,20 +152,44 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
         if hist.empty or len(hist) < 2:
             return None
 
-        current   = float(hist["Close"].iloc[-1])
-        prev      = float(hist["Close"].iloc[-2])
+        comex_price = float(hist["Close"].iloc[-1])
+        comex_prev  = float(hist["Close"].iloc[-2])
+
+        # ── MCX metals: convert COMEX (USD/oz) → MCX (INR/unit) ───
+        if symbol in _MCX_CONV:
+            usd_inr  = _fetch_usd_inr()
+            conv     = _MCX_CONV[symbol]
+            current  = round(comex_price * conv * usd_inr, 2)
+            prev     = round(comex_prev  * conv * usd_inr, 2)
+            h52w     = round(float(hist["High"].max()) * conv * usd_inr, 2)
+            l52w     = round(float(hist["Low"].min())  * conv * usd_inr, 2)
+            currency = "INR"
+        elif is_mcx:
+            current  = comex_price
+            prev     = comex_prev
+            h52w     = float(hist["High"].max())
+            l52w     = float(hist["Low"].min())
+            currency = "USD"
+        else:
+            current  = comex_price
+            prev     = comex_prev
+            h52w     = float(hist["High"].max())
+            l52w     = float(hist["Low"].min())
+            currency = "INR"
+
         day_chg   = round((current - prev) / prev * 100, 2)
         day_vol   = int(hist["Volume"].iloc[-1])
         avg_vol   = int(hist["Volume"].iloc[-20:].mean()) if len(hist) >= 20 else day_vol
         vol_ratio = round(day_vol / avg_vol, 2) if avg_vol > 0 else 1.0
-        h52w      = float(hist["High"].max())
-        l52w      = float(hist["Low"].min())
+
+        # Technicals computed on raw COMEX prices (scale-invariant ratios: RSI, MACD, Stoch)
+        tech = compute_technicals(hist, comex_price)
 
         info = tk.fast_info
         mktcap_raw = getattr(info, "market_cap", 0) or 0
         mktcap_cr  = round(mktcap_raw / 1e7, 0)
 
-        tech = compute_technicals(hist, current)
+        lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, ""))
 
         return PriceData(
             symbol=symbol,
@@ -149,6 +204,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
             market_cap_cr=mktcap_cr,
             currency=currency,
             technical=tech,
+            lot_size=lot_s,
+            lot_unit=lot_u,
         )
     except Exception:
         return None

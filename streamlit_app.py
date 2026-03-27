@@ -477,7 +477,7 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 # Version key — bump this string whenever PriceData/TradeSignal schema changes
 # so stale cached objects are discarded automatically on next load
-_APP_VERSION = "v3"
+_APP_VERSION = "v4"
 if st.session_state.get("_app_version") != _APP_VERSION:
     for _k in ["result", "last_run", "bt_result"]:
         st.session_state.pop(_k, None)
@@ -848,7 +848,48 @@ with tab_signals:
                     if tech.near_resistance:
                         rsi_html += '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">📍 Near Resistance</span> '
                     if tech.bb_squeeze:
-                        rsi_html += '<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">⚡ BB Squeeze</span>'
+                        rsi_html += '<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">⚡ BB Squeeze</span> '
+
+                    # ── MACD badge ──────────────────────────────
+                    if getattr(tech, "macd_line", 0.0) != 0.0:
+                        _mc = "#00ff88" if tech.macd_bullish else "#ff4455"
+                        _ma = "↑" if tech.macd_bullish else "↓"
+                        _ml = "Bullish" if tech.macd_bullish else "Bearish"
+                        rsi_html += (
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_mc};'
+                            f'color:{_mc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'MACD {_ma} {_ml}</span> '
+                        )
+
+                    # ── Stochastic badge ────────────────────────
+                    if getattr(tech, "stoch_oversold", False):
+                        rsi_html += (
+                            f'<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;'
+                            f'color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'Stoch {tech.stoch_k:.0f} Oversold</span> '
+                        )
+                    elif getattr(tech, "stoch_overbought", False):
+                        rsi_html += (
+                            f'<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;'
+                            f'color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'Stoch {tech.stoch_k:.0f} Overbought</span> '
+                        )
+
+                    # ── OBV badge ───────────────────────────────
+                    _obv = getattr(tech, "obv_trend", "Neutral")
+                    if _obv == "Rising":
+                        rsi_html += '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">OBV ↑ Rising</span> '
+                    elif _obv == "Falling":
+                        rsi_html += '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">OBV ↓ Falling</span> '
+
+                    # ── ATR badge (show only if volatility > 2%) ─
+                    _atr_pct = getattr(tech, "atr_pct", 0.0)
+                    if _atr_pct > 2.0:
+                        rsi_html += (
+                            f'<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;'
+                            f'color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'ATR {_atr_pct:.1f}% Vol</span>'
+                        )
 
                 # ── Corporate event warning ────────────────────
                 event_html = ""
@@ -865,6 +906,12 @@ with tab_signals:
 
                 price_html = ""
                 if sig.entry_low > 0:
+                    _lot_s = getattr(imp.price_data, "lot_size", 1) if imp.price_data else 1
+                    _lot_u = getattr(imp.price_data, "lot_unit", "")  if imp.price_data else ""
+                    _lot_cell = (
+                        f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Lot Size</div>'
+                        f'<div style="font-weight:700;color:#00d4ff">{_lot_s} {_lot_u}/lot</div></div>'
+                    ) if _lot_s > 1 else ""
                     price_html = (
                         f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0 8px">'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Entry</div>'
@@ -874,11 +921,12 @@ with tab_signals:
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Target 1</div>'
                         f'<div style="font-weight:700;color:#00ff88">{sym}{sig.target1:,.2f}</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Target 2</div>'
-                        f'<div style="font-weight:700;color:#00ff88">{sym}{sig.target2:,.2f}</div></div>'
+                        f'<div style="font-weight:700;color:#00ff88">{sig.target2:,.2f}</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">R:R Ratio</div>'
                         f'<div style="font-weight:700;color:#ffd700">{sig.risk_reward:.1f}x</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Horizon</div>'
                         f'<div style="font-weight:700;color:#00d4ff;font-size:11px">{sig.time_horizon}</div></div>'
+                        f'{_lot_cell}'
                         f'</div>'
                     )
                 under_b = '<span class="badge badge-under">★ UNDERREACTION</span>' if is_under else ""
