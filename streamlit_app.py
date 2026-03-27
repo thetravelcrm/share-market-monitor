@@ -199,8 +199,10 @@ section[data-testid="stSidebar"] .stButton button:hover { background: #ffd700; }
 
 
 # ═══════════════════════════════════════════════════════════════
-#  PIN Gate  (blocks all content until correct PIN is entered)
+#  PIN Gate  (24-hour session via daily URL token; auto-submits at 4 digits)
 # ═══════════════════════════════════════════════════════════════
+import hashlib as _hashlib
+
 _HARDCODED_PIN = "0522"
 
 def _get_pin() -> str:
@@ -209,8 +211,18 @@ def _get_pin() -> str:
     except Exception:
         return _HARDCODED_PIN
 
+def _daily_token() -> str:
+    """Hash of PIN + IST date — changes each midnight IST."""
+    ist_today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    return _hashlib.md5((_get_pin() + ist_today).encode()).hexdigest()[:16]
+
 if "pin_verified" not in st.session_state:
     st.session_state["pin_verified"] = False
+
+# Restore from URL token (persists across page refreshes for today)
+_qp = st.query_params
+if not st.session_state["pin_verified"] and _qp.get("t") == _daily_token():
+    st.session_state["pin_verified"] = True
 
 if not st.session_state["pin_verified"]:
     _, col_pin, _ = st.columns([1, 1, 1])
@@ -219,16 +231,18 @@ if not st.session_state["pin_verified"]:
         <div style='text-align:center;padding:60px 0 20px'>
           <div style='font-size:54px'>🔒</div>
           <h2 style='color:#00d4ff;margin:12px 0 4px'>Market Monitor</h2>
-          <p style='color:#a8b0d0;font-size:13px'>Enter PIN to access the dashboard</p>
+          <p style='color:#a8b0d0;font-size:13px'>Type PIN — unlocks automatically after 4 digits</p>
         </div>""", unsafe_allow_html=True)
         pin_val = st.text_input(
             "PIN", max_chars=4, type="password",
-            placeholder="Enter 4-digit PIN",
+            placeholder="● ● ● ●",
             label_visibility="collapsed",
         )
-        if st.button("Unlock", type="primary", use_container_width=True):
+        # Auto-submit when 4 digits entered (no button press needed)
+        if len(pin_val) == 4:
             if pin_val == _get_pin():
                 st.session_state["pin_verified"] = True
+                st.query_params["t"] = _daily_token()   # persist for today
                 st.rerun()
             else:
                 st.error("Incorrect PIN. Please try again.")
@@ -341,13 +355,41 @@ with st.sidebar:
     # ── Fyers Live Data connection ─────────────────────────────
     try:
         from fyers_fetcher import is_configured, get_auth_url, exchange_auth_code
+        import os as _os, json as _json
+
+        def _fyers_save(token: str) -> None:
+            try:
+                with open(".fyers_session.json", "w") as _f:
+                    _json.dump({"token": token,
+                                "date": (datetime.now(timezone.utc)+timedelta(hours=5,minutes=30)).strftime("%Y-%m-%d")}, _f)
+            except Exception:
+                pass
+
+        def _fyers_load() -> str:
+            try:
+                if _os.path.exists(".fyers_session.json"):
+                    d = _json.load(open(".fyers_session.json"))
+                    today = (datetime.now(timezone.utc)+timedelta(hours=5,minutes=30)).strftime("%Y-%m-%d")
+                    if d.get("date") == today:
+                        return d.get("token", "")
+            except Exception:
+                pass
+            return ""
+
         if is_configured():
+            # Restore token from file if session_state lost it (page refresh)
+            if not st.session_state.get("fyers_token"):
+                saved = _fyers_load()
+                if saved:
+                    st.session_state["fyers_token"] = saved
+
             # Check if auth_code came back in URL after Fyers login
             qp = st.query_params
             if "auth_code" in qp and "fyers_token" not in st.session_state:
                 token = exchange_auth_code(qp["auth_code"])
                 if token:
                     st.session_state["fyers_token"] = token
+                    _fyers_save(token)
                     st.query_params.clear()
                     st.rerun()
 
@@ -358,6 +400,8 @@ with st.sidebar:
                 )
                 if st.button("🔌 Disconnect Fyers", use_container_width=True):
                     del st.session_state["fyers_token"]
+                    try: _os.remove(".fyers_session.json")
+                    except Exception: pass
                     st.rerun()
             else:
                 st.markdown(
@@ -431,6 +475,14 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 #  Pipeline runner
 # ═══════════════════════════════════════════════════════════════
+# Version key — bump this string whenever PriceData/TradeSignal schema changes
+# so stale cached objects are discarded automatically on next load
+_APP_VERSION = "v3"
+if st.session_state.get("_app_version") != _APP_VERSION:
+    for _k in ["result", "last_run", "bt_result"]:
+        st.session_state.pop(_k, None)
+    st.session_state["_app_version"] = _APP_VERSION
+
 if "result"   not in st.session_state: st.session_state["result"]   = None
 if "last_run" not in st.session_state: st.session_state["last_run"] = None
 
@@ -771,7 +823,7 @@ with tab_signals:
             for item, imp, sig in signals:
                 sym      = cur_sym(imp.price_data)
                 is_under = imp.reaction_status == "Underreacted"
-                tech     = imp.price_data.technical if imp.price_data else None
+                tech     = getattr(imp.price_data, "technical", None) if imp.price_data else None
 
                 # ── RSI badge ──────────────────────────────────
                 rsi_html = ""
