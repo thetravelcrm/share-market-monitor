@@ -16,6 +16,7 @@ import streamlit as st
 from pipeline        import run_pipeline, PipelineResult
 from impact_analyzer import ImpactResult
 from signal_engine   import generate_signal
+from history_store   import load_history, append_run
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
@@ -195,6 +196,43 @@ section[data-testid="stSidebar"] .stButton button:hover { background: #ffd700; }
 .padded { padding: 16px 24px; }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  PIN Gate  (blocks all content until correct PIN is entered)
+# ═══════════════════════════════════════════════════════════════
+_HARDCODED_PIN = "0522"
+
+def _get_pin() -> str:
+    try:
+        return str(st.secrets.get("APP_PIN", _HARDCODED_PIN))
+    except Exception:
+        return _HARDCODED_PIN
+
+if "pin_verified" not in st.session_state:
+    st.session_state["pin_verified"] = False
+
+if not st.session_state["pin_verified"]:
+    _, col_pin, _ = st.columns([1, 1, 1])
+    with col_pin:
+        st.markdown("""
+        <div style='text-align:center;padding:60px 0 20px'>
+          <div style='font-size:54px'>🔒</div>
+          <h2 style='color:#00d4ff;margin:12px 0 4px'>Market Monitor</h2>
+          <p style='color:#a8b0d0;font-size:13px'>Enter PIN to access the dashboard</p>
+        </div>""", unsafe_allow_html=True)
+        pin_val = st.text_input(
+            "PIN", max_chars=4, type="password",
+            placeholder="Enter 4-digit PIN",
+            label_visibility="collapsed",
+        )
+        if st.button("Unlock", type="primary", use_container_width=True):
+            if pin_val == _get_pin():
+                st.session_state["pin_verified"] = True
+                st.rerun()
+            else:
+                st.error("Incorrect PIN. Please try again.")
+    st.stop()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -410,6 +448,39 @@ def do_run():
 if run_btn:
     do_run()
 
+# ═══════════════════════════════════════════════════════════════
+#  Scheduled Auto-Run  (IST slots: 09:15, 13:00, 15:20)
+# ═══════════════════════════════════════════════════════════════
+_SLOTS = [
+    ("09:15 IST", 9 * 60 + 15),
+    ("13:00 IST", 13 * 60 + 0),
+    ("15:20 IST", 15 * 60 + 20),
+]
+
+def _check_schedule() -> None:
+    """Fire any due scheduled slot that hasn't run yet today (IST)."""
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    today = ist.strftime("%Y-%m-%d")
+    cur   = ist.hour * 60 + ist.minute
+    if "schedule_log" not in st.session_state:
+        st.session_state["schedule_log"] = {}
+    log = st.session_state["schedule_log"]
+    # Prune stale days
+    for k in [k for k in log if k != today]:
+        del log[k]
+    today_log = log.setdefault(today, {})
+    for label, slot_mins in _SLOTS:
+        if cur >= slot_mins and not today_log.get(label, False):
+            today_log[label] = True   # mark before run to prevent double-fire
+            do_run()
+            new_result = st.session_state.get("result")
+            if new_result:
+                sigs = [s for _, _, s in new_result.all_signals]
+                append_run(label, sigs)
+            st.rerun()
+
+_check_schedule()
+
 result: PipelineResult | None = st.session_state.get("result")
 if result is None:
     st.markdown("""
@@ -471,7 +542,7 @@ st.markdown(
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
 tab_impact, tab_opps, tab_signals, tab_sectors, tab_news, \
-tab_nse, tab_journal, tab_backtest = st.tabs([
+tab_nse, tab_journal, tab_backtest, tab_history = st.tabs([
     "🔥 Top Impacted",
     "⚡ Underreacted",
     "🎯 Trade Signals",
@@ -480,6 +551,7 @@ tab_nse, tab_journal, tab_backtest = st.tabs([
     "📊 NSE Data",
     "📓 Trade Journal",
     "🔬 Backtest",
+    "📅 Signal History",
 ])
 
 
@@ -1204,6 +1276,98 @@ with tab_backtest:
                              "actual_return_pct","hit_target","hit_stop"]
                 show_cols = [c for c in show_cols if c in bt_result.columns]
                 st.dataframe(bt_result[show_cols], use_container_width=True, hide_index=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 9  —  Signal History (Prediction vs Actual)
+# ───────────────────────────────────────────────────────────────
+with tab_history:
+    from backtester import backtest_signal as _bt_signal
+
+    history = load_history()
+    st.markdown(
+        '<div class="card"><div class="card-title">📅 Signal History — Prediction vs Actual</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not history:
+        st.info(
+            "No history yet. Signals are archived automatically at the three scheduled "
+            "slots: **09:15 IST**, **13:00 IST**, and **15:20 IST**. "
+            "The next time the app is open at or after one of those times the pipeline "
+            "will run automatically and the signals will be saved here."
+        )
+    else:
+        for entry in reversed(history):
+            run_utc  = datetime.fromisoformat(entry["run_time"])
+            run_ist  = run_utc + timedelta(hours=5, minutes=30)
+            slot_lbl = entry.get("slot_label", "—")
+            sigs     = entry.get("signals", [])
+            run_id   = entry["run_id"]
+            exp_lbl  = f"{run_ist.strftime('%d %b %Y  %H:%M IST')}  ·  {slot_lbl}  ·  {len(sigs)} signal(s)"
+
+            with st.expander(exp_lbl, expanded=False):
+                if not sigs:
+                    st.caption("No signals were generated at this slot.")
+                    continue
+
+                # Prediction table
+                pred_rows = [{
+                    "Symbol":     s["symbol"],
+                    "Action":     s["action"],
+                    "Entry Low":  s["entry_low"],
+                    "Entry High": s["entry_high"],
+                    "Stop":       s["stop_loss"],
+                    "T1":         s["target1"],
+                    "T2":         s["target2"],
+                    "R:R":        s["risk_reward"],
+                    "Conf":       f"{s['confidence']}%",
+                    "Edge":       s["edge_type"],
+                } for s in sigs]
+                st.dataframe(pd.DataFrame(pred_rows), use_container_width=True, hide_index=True)
+
+                # Verify Outcomes button
+                if st.button("Verify Outcomes", key=f"verify_{run_id}"):
+                    outcomes = []
+                    prog = st.progress(0, text="Backtesting signals…")
+                    for i, s in enumerate(sigs):
+                        prog.progress((i + 1) / len(sigs), text=f"Checking {s['symbol']}…")
+                        res = _bt_signal(
+                            symbol      = s["symbol"],
+                            action      = s["action"],
+                            entry       = s["entry_low"],
+                            target      = s["target2"],
+                            stop        = s["stop_loss"],
+                            signal_date = run_utc,
+                            horizon_days= 5,
+                        )
+                        outcomes.append({**s, **res})
+                    prog.empty()
+                    st.session_state[f"res_{run_id}"] = outcomes
+
+                # Show cached outcomes
+                cached = st.session_state.get(f"res_{run_id}")
+                if cached:
+                    def _oc(val: str):
+                        if val == "WIN":        return "background-color:#0a1f0f;color:#00ff88"
+                        if val == "LOSS":       return "background-color:#1f0a0a;color:#ff4455"
+                        if val == "BREAK-EVEN": return "background-color:#1a140a;color:#ffaa33"
+                        return ""
+                    res_rows = [{
+                        "Symbol":   o["symbol"],
+                        "Action":   o["action"],
+                        "Outcome":  o.get("outcome", "—"),
+                        "Return %": f"{o.get('actual_return_pct', 0):+.2f}%",
+                        "Hit T2":   "Yes" if o.get("hit_target") else "No",
+                        "Hit SL":   "Yes" if o.get("hit_stop")   else "No",
+                    } for o in cached]
+                    res_df = pd.DataFrame(res_rows)
+                    st.dataframe(
+                        res_df.style.map(_oc, subset=["Outcome"]),
+                        use_container_width=True, hide_index=True,
+                    )
 
     st.markdown('</div>', unsafe_allow_html=True)
 
