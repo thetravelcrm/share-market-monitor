@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
@@ -48,6 +48,18 @@ class TechnicalData:
 
     # ── OBV Trend — needs 5+ bars ─────────────────────────────
     obv_trend: str         = "Neutral"  # "Rising" | "Falling" | "Neutral"
+
+    # ── ADX(14) — needs 28+ bars ──────────────────────────────
+    adx_14: float          = 0.0        # 0–100  (> 25 = strong trend)
+    adx_trending: bool     = False      # ADX > 25
+
+    # ── SuperTrend(10, 3) — needs 12+ bars ────────────────────
+    supertrend_bullish: Optional[bool] = None  # None = insufficient data
+
+    # ── CCI(20) — needs 20+ bars ──────────────────────────────
+    cci_20: float          = 0.0
+    cci_oversold: bool     = False      # CCI < −100
+    cci_overbought: bool   = False      # CCI > +100
 
 
 # ─────────────────────────────────────────────────────────────
@@ -168,6 +180,96 @@ def _obv_trend(close: pd.Series, volume: pd.Series) -> str:
     return "Neutral"
 
 
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series) -> tuple[float, bool]:
+    """ADX(14) — trend strength. Returns (adx_value, is_trending). Needs 28+ bars."""
+    if len(close) < 28:
+        return 0.0, False
+    prev_high  = high.shift(1)
+    prev_low   = low.shift(1)
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low  - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    up_move   = high - prev_high
+    down_move = prev_low - low
+    plus_dm   = pd.Series(
+        np.where((up_move > down_move) & (up_move > 0),   up_move,   0.0),
+        index=close.index,
+    )
+    minus_dm  = pd.Series(
+        np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
+        index=close.index,
+    )
+    alpha      = 1 / 14
+    tr14       = tr.ewm(alpha=alpha, adjust=False).mean()
+    plus_di14  = 100 * plus_dm.ewm(alpha=alpha, adjust=False).mean()  / tr14.replace(0, np.nan)
+    minus_di14 = 100 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / tr14.replace(0, np.nan)
+    di_sum     = (plus_di14 + minus_di14).replace(0, np.nan)
+    dx         = (100 * (plus_di14 - minus_di14).abs() / di_sum).fillna(0)
+    adx_val    = round(float(dx.ewm(alpha=alpha, adjust=False).mean().iloc[-1]), 2)
+    return adx_val, adx_val > 25
+
+
+def _supertrend(
+    high: pd.Series, low: pd.Series, close: pd.Series,
+    period: int = 10, multiplier: float = 3.0,
+) -> Optional[bool]:
+    """SuperTrend(10, 3). Returns True=bullish, False=bearish, None=insufficient data."""
+    n = len(close)
+    if n < period + 2:
+        return None
+    prev_close  = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low  - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr          = tr.ewm(alpha=1 / period, adjust=False).mean()
+    hl2          = (high + low) / 2
+    basic_upper  = (hl2 + multiplier * atr).values
+    basic_lower  = (hl2 - multiplier * atr).values
+    close_arr    = close.values
+    final_upper  = basic_upper.copy()
+    final_lower  = basic_lower.copy()
+    trend        = np.ones(n, dtype=int)   # 1=bullish, −1=bearish
+    for i in range(1, n):
+        final_upper[i] = (
+            basic_upper[i]
+            if basic_upper[i] < final_upper[i - 1] or close_arr[i - 1] > final_upper[i - 1]
+            else final_upper[i - 1]
+        )
+        final_lower[i] = (
+            basic_lower[i]
+            if basic_lower[i] > final_lower[i - 1] or close_arr[i - 1] < final_lower[i - 1]
+            else final_lower[i - 1]
+        )
+        if trend[i - 1] == -1:
+            trend[i] = 1 if close_arr[i] > final_upper[i] else -1
+        else:
+            trend[i] = -1 if close_arr[i] < final_lower[i] else 1
+    return bool(trend[-1] == 1)
+
+
+def _cci(
+    high: pd.Series, low: pd.Series, close: pd.Series, period: int = 20
+) -> tuple[float, bool, bool]:
+    """CCI(20). Returns (cci_value, oversold, overbought). Needs 20+ bars."""
+    if len(close) < period:
+        return 0.0, False, False
+    tp       = (high + low + close) / 3
+    sma_tp   = tp.rolling(period).mean()
+    mean_dev = tp.rolling(period).apply(
+        lambda x: np.mean(np.abs(x - x.mean())), raw=True
+    )
+    denom    = (0.015 * mean_dev).replace(0, np.nan)
+    cci_ser  = (tp - sma_tp) / denom
+    raw      = cci_ser.iloc[-1]
+    cci_val  = round(float(raw) if not pd.isna(raw) else 0.0, 2)
+    return cci_val, cci_val < -100, cci_val > 100
+
+
 # ─────────────────────────────────────────────────────────────
 #  Main entry point
 # ─────────────────────────────────────────────────────────────
@@ -182,10 +284,13 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
         if hist is None or hist.empty or len(hist) < 15:
             return None
 
-        close  = hist["Close"].dropna()
-        high   = hist["High"].dropna()
-        low    = hist["Low"].dropna()
-        volume = hist["Volume"].dropna()
+        # Drop rows where ANY of the required columns is NaN so all series
+        # stay perfectly aligned by index (prevents stochastic/OBV mismatches)
+        hist_clean = hist[["Close", "High", "Low", "Volume"]].dropna()
+        close  = hist_clean["Close"]
+        high   = hist_clean["High"]
+        low    = hist_clean["Low"]
+        volume = hist_clean["Volume"]
 
         if len(close) < 15:
             return None
@@ -241,6 +346,15 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
         # ── OBV Trend ──────────────────────────────────────────
         obv_t = _obv_trend(close, volume)
 
+        # ── ADX(14) ────────────────────────────────────────────
+        adx_val, adx_trd = _adx(high, low, close)
+
+        # ── SuperTrend(10, 3) ──────────────────────────────────
+        st_bull = _supertrend(high, low, close)
+
+        # ── CCI(20) ────────────────────────────────────────────
+        cci_val, cci_os, cci_ob = _cci(high, low, close)
+
         return TechnicalData(
             rsi_14=rsi,
             sma_20=sma_20,
@@ -266,6 +380,12 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
             atr_14=atr_val,
             atr_pct=atr_pct_val,
             obv_trend=obv_t,
+            adx_14=adx_val,
+            adx_trending=adx_trd,
+            supertrend_bullish=st_bull,
+            cci_20=cci_val,
+            cci_oversold=cci_os,
+            cci_overbought=cci_ob,
         )
 
     except Exception:

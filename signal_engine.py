@@ -213,6 +213,28 @@ def _confidence_score(
             elif direction == "SHORT" and not _above: score += 5
             elif direction == "SHORT" and _above:     score -= 5
 
+        # ADX trend strength (+10 aligns when trending, -8 opposes when trending)
+        _adx_trending = getattr(tech, "adx_trending", False)
+        if _adx_trending:
+            if (direction == "BUY"   and tech.trend == "Uptrend") or \
+               (direction == "SHORT" and tech.trend == "Downtrend"):
+                score += 10
+            elif (direction == "BUY"   and tech.trend == "Downtrend") or \
+                 (direction == "SHORT" and tech.trend == "Uptrend"):
+                score -= 8
+
+        # SuperTrend (+12 aligned, -12 contradiction — only when data present)
+        _st = getattr(tech, "supertrend_bullish", None)
+        if _st is not None:
+            if direction == "BUY"   and _st:       score += 12
+            elif direction == "BUY"   and not _st: score -= 12
+            elif direction == "SHORT" and not _st: score += 12
+            elif direction == "SHORT" and _st:     score -= 12
+
+        # CCI extremes (+8 pts)
+        if direction == "BUY"   and getattr(tech, "cci_oversold",   False): score += 8
+        elif direction == "SHORT" and getattr(tech, "cci_overbought", False): score += 8
+
     return max(0, min(score, 100))
 
 
@@ -254,6 +276,17 @@ def _build_rationale(result, rr, conf, horizon, edge) -> str:
         atr_pct = getattr(tech, "atr_pct", 0.0)
         if atr_pct > 2.0:
             parts.append(f"ATR {atr_pct:.1f}% vol")
+        adx_v = getattr(tech, "adx_14", 0.0)
+        if adx_v > 0:
+            parts.append(f"ADX {adx_v:.0f}{'★' if adx_v > 25 else ''}")
+        st = getattr(tech, "supertrend_bullish", None)
+        if st is not None:
+            parts.append("ST ↑" if st else "ST ↓")
+        cci_v = getattr(tech, "cci_20", 0.0)
+        if getattr(tech, "cci_oversold", False):
+            parts.append(f"CCI {cci_v:.0f} oversold")
+        elif getattr(tech, "cci_overbought", False):
+            parts.append(f"CCI {cci_v:.0f} overbought")
     return " | ".join(parts)
 
 

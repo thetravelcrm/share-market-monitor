@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from config import STOCK_UNIVERSE, SECTOR_STOCKS
 from news_fetcher import NewsItem

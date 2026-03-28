@@ -477,7 +477,7 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 # Version key — bump this string whenever PriceData/TradeSignal schema changes
 # so stale cached objects are discarded automatically on next load
-_APP_VERSION = "v4"
+_APP_VERSION = "v5"
 if st.session_state.get("_app_version") != _APP_VERSION:
     for _k in ["result", "last_run", "bt_result"]:
         st.session_state.pop(_k, None)
@@ -888,7 +888,44 @@ with tab_signals:
                         rsi_html += (
                             f'<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;'
                             f'color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">'
-                            f'ATR {_atr_pct:.1f}% Vol</span>'
+                            f'ATR {_atr_pct:.1f}% Vol</span> '
+                        )
+
+                    # ── ADX badge ───────────────────────────────
+                    _adx_v = getattr(tech, "adx_14", 0.0)
+                    if _adx_v > 0:
+                        _adx_col = "#00ff88" if getattr(tech, "adx_trending", False) else "#a8b0d0"
+                        _adx_lbl = "Trending" if getattr(tech, "adx_trending", False) else "Weak"
+                        rsi_html += (
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_adx_col};'
+                            f'color:{_adx_col};padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'ADX {_adx_v:.0f} {_adx_lbl}</span> '
+                        )
+
+                    # ── SuperTrend badge ─────────────────────────
+                    _st = getattr(tech, "supertrend_bullish", None)
+                    if _st is not None:
+                        _st_col = "#00ff88" if _st else "#ff4455"
+                        _st_lbl = "↑ Bull" if _st else "↓ Bear"
+                        rsi_html += (
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_st_col};'
+                            f'color:{_st_col};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'SuperTrend {_st_lbl}</span> '
+                        )
+
+                    # ── CCI badge ────────────────────────────────
+                    _cci_v = getattr(tech, "cci_20", 0.0)
+                    if getattr(tech, "cci_oversold", False):
+                        rsi_html += (
+                            f'<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;'
+                            f'color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'CCI {_cci_v:.0f} Oversold</span> '
+                        )
+                    elif getattr(tech, "cci_overbought", False):
+                        rsi_html += (
+                            f'<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;'
+                            f'color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'CCI {_cci_v:.0f} Overbought</span>'
                         )
 
                 # ── Corporate event warning ────────────────────
@@ -921,7 +958,7 @@ with tab_signals:
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Target 1</div>'
                         f'<div style="font-weight:700;color:#00ff88">{sym}{sig.target1:,.2f}</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Target 2</div>'
-                        f'<div style="font-weight:700;color:#00ff88">{sig.target2:,.2f}</div></div>'
+                        f'<div style="font-weight:700;color:#00ff88">{sym}{sig.target2:,.2f}</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">R:R Ratio</div>'
                         f'<div style="font-weight:700;color:#ffd700">{sig.risk_reward:.1f}x</div></div>'
                         f'<div><div style="color:#6b7280;font-size:10px;text-transform:uppercase">Horizon</div>'
