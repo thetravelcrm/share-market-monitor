@@ -47,10 +47,47 @@ class SentimentResult:
     neutral: float
     category: str       # "Earnings" | "Macro" | etc.
     macro_sectors: list[str]   # sectors affected via macro keywords
+    news_type: str      = "Ongoing"     # "Breaking" | "Ongoing" | "Rumor"
+    time_relevance: str = "Short-term"  # "Immediate" | "Short-term" | "Lagging"
+
+
+# ── Negation pre-processing (fixes "not bullish" → negative) ──
+_NEGATION_RULES = [
+    (re.compile(r'\bnot\s+(bullish|rally|surge|beat|outperform|upgrade|recovery|breakout)\b', re.I),
+     "bearish"),
+    (re.compile(r'\bnot\s+(bearish|crash|collapse|selloff|downgrade|recession)\b', re.I),
+     "recovery"),
+    (re.compile(r'\bfailed?\s+to\s+(beat|outperform|surge|rally|recover)\b', re.I),
+     "missed expectations"),
+    (re.compile(r'\bunlikely\s+to\s+(rally|surge|beat|recover|grow)\b', re.I),
+     "stagnation"),
+]
+
+
+def _preprocess_negation(text: str) -> str:
+    for pattern, replacement in _NEGATION_RULES:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# ── News type classification ──────────────────────────────────
+_BREAKING_KW = ["breaking", "just in", "flash", "alert", "confirms", "announces", "declared", "official"]
+_RUMOR_KW    = ["rumor", "rumour", "sources say", "reportedly", "speculation",
+                "unconfirmed", "likely to", "may consider", "could announce"]
+
+
+def _classify_news(text: str) -> tuple[str, str]:
+    """Return (news_type, time_relevance)."""
+    tl = text.lower()
+    if any(kw in tl for kw in _BREAKING_KW):
+        return "Breaking", "Immediate"
+    if any(kw in tl for kw in _RUMOR_KW):
+        return "Rumor", "Lagging"
+    return "Ongoing", "Short-term"
 
 
 def analyze(item: NewsItem) -> SentimentResult:
-    text = item.raw_text
+    text = _preprocess_negation(item.raw_text)
     scores = _analyzer.polarity_scores(text)
     compound = scores["compound"]
 
@@ -63,6 +100,7 @@ def analyze(item: NewsItem) -> SentimentResult:
 
     category = _detect_category(text)
     macro_sectors = _detect_macro_sectors(text)
+    news_type, time_rel = _classify_news(text)
 
     return SentimentResult(
         label=label,
@@ -72,6 +110,8 @@ def analyze(item: NewsItem) -> SentimentResult:
         neutral=scores["neu"],
         category=category,
         macro_sectors=macro_sectors,
+        news_type=news_type,
+        time_relevance=time_rel,
     )
 
 

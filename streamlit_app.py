@@ -118,6 +118,7 @@ section[data-testid="stSidebar"] > div { background: #141829; }
 .sig-buy        { background: rgba(100,200,255,0.15);color: #64c8ff; padding: 4px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; }
 .sig-short      { background: rgba(255,68,85,0.15); color: #ff4455; padding: 4px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; }
 .sig-avoid      { background: rgba(255,170,51,0.15);color: #ffaa33; padding: 4px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; }
+.sig-notrade    { background: rgba(136,136,136,0.15);color: #888888; padding: 4px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; }
 
 /* ── Opportunity card ── */
 .opp-card {
@@ -278,9 +279,10 @@ def price_badge(pct: float) -> str:
 
 def sig_badge(action: str) -> str:
     mapping = {
-        "BUY":   ("STRONG BUY", "sig-strong-buy"),
-        "SHORT": ("SHORT / SELL", "sig-short"),
-        "AVOID": ("AVOID", "sig-avoid"),
+        "BUY":      ("STRONG BUY", "sig-strong-buy"),
+        "SHORT":    ("SHORT / SELL", "sig-short"),
+        "AVOID":    ("AVOID", "sig-avoid"),
+        "NO TRADE": ("NO TRADE", "sig-notrade"),
     }
     label, cls = mapping.get(action, (action, "sig-avoid"))
     return f'<span class="{cls}">{label}</span>'
@@ -477,7 +479,7 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 # Version key — bump this string whenever PriceData/TradeSignal schema changes
 # so stale cached objects are discarded automatically on next load
-_APP_VERSION = "v5"
+_APP_VERSION = "v6"
 if st.session_state.get("_app_version") != _APP_VERSION:
     for _k in ["result", "last_run", "bt_result"]:
         st.session_state.pop(_k, None)
@@ -723,7 +725,7 @@ with tab_opps:
             gap  = abs(imp.expected_move_pct - imp.actual_move_pct)
             sym  = cur_sym(imp.price_data)
             price_now = f"{sym}{imp.price_data.current_price:,.2f}" if imp.price_data else "—"
-            act_col  = "#00ff88" if sig.action == "BUY" else "#ff4455"
+            act_col  = "#00ff88" if sig.action == "BUY" else ("#888" if sig.action == "NO TRADE" else "#ff4455")
             why = why_underreacted(imp)
             imp_s = impact_score(imp.impact_strength)
 
@@ -813,11 +815,14 @@ with tab_signals:
                    if sig.action=="SHORT" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
         avoids  = [(item,imp,sig) for item,imp,sig in result.all_signals
                    if sig.action=="AVOID" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+        notrades = [(item,imp,sig) for item,imp,sig in result.all_signals
+                    if sig.action=="NO TRADE"]
 
-        sub1, sub2, sub3 = st.tabs([
-            f"✅ BUY ({len(buys)})",
-            f"🔴 SHORT ({len(shorts)})",
-            f"⚠️ AVOID ({len(avoids)})",
+        sub1, sub2, sub3, sub4 = st.tabs([
+            f"BUY ({len(buys)})",
+            f"SHORT ({len(shorts)})",
+            f"AVOID ({len(avoids)})",
+            f"NO TRADE ({len(notrades)})",
         ])
 
         def render_signal_cards(signals, card_class):
@@ -928,6 +933,43 @@ with tab_signals:
                             f'CCI {_cci_v:.0f} Overbought</span>'
                         )
 
+                    # ── VWAP badge ──────────────────────────────────
+                    _vwap = getattr(tech, "vwap_5d", 0.0)
+                    if _vwap > 0:
+                        _vw_above = getattr(tech, "price_above_vwap", False)
+                        _vw_col = "#00ff88" if _vw_above else "#ff4455"
+                        _vw_lbl = "Above" if _vw_above else "Below"
+                        rsi_html += (
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_vw_col};'
+                            f'color:{_vw_col};padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'VWAP {_vw_lbl}</span> '
+                        )
+
+                    # ── Market Regime badge ─────────────────────────
+                    _regime = getattr(tech, "market_regime", "Unknown")
+                    if _regime != "Unknown":
+                        _reg_colors = {"Trending": "#00ff88", "Sideways": "#ffaa33", "HighVol": "#ff4455", "LowLiquidity": "#888"}
+                        _reg_col = _reg_colors.get(_regime, "#a8b0d0")
+                        rsi_html += (
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_reg_col};'
+                            f'color:{_reg_col};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'{_regime}</span> '
+                        )
+
+                    # ── Volume analysis badges ──────────────────────
+                    if getattr(tech, "volume_spike", False):
+                        rsi_html += (
+                            '<span style="background:rgba(0,255,136,0.15);border:1px solid #00ff88;'
+                            'color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            'VOL SPIKE</span> '
+                        )
+                    if getattr(tech, "pre_breakout", False):
+                        rsi_html += (
+                            '<span style="background:rgba(255,215,0,0.15);border:1px solid #ffd700;'
+                            'color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            'PRE-BREAKOUT</span> '
+                        )
+
                 # ── Corporate event warning ────────────────────
                 event_html = ""
                 corp_events = getattr(result, "corporate_events", [])
@@ -985,6 +1027,7 @@ with tab_signals:
                     f'  {badge(f"Impact {imp_s}/10", imp_cls)}'
                     f'  {badge(imp.impact_strength, imp_cls)}'
                     f'  {badge(imp.sentiment_label, "badge-pos" if imp.sentiment_label=="Positive" else "badge-neg")}'
+                    f'  {badge(getattr(imp, "news_type", "Ongoing"), "badge-neg" if getattr(imp, "news_type", "Ongoing") == "Rumor" else ("badge-pos" if getattr(imp, "news_type", "Ongoing") == "Breaking" else "badge-teal"))}'
                     f'  {badge(sig.edge_type, "badge-teal")}'
                     f'  {badge(imp.sector, "badge-gold")}'
                     f'</div>'
@@ -1009,9 +1052,10 @@ with tab_signals:
                                   sig.risk_reward, sig.confidence, sig.edge_type)
                         st.success(f"✅ {sig.symbol} logged to Trade Journal")
 
-        with sub1: render_signal_cards(buys,   "signal-card-buy")
-        with sub2: render_signal_cards(shorts,  "signal-card-short")
-        with sub3: render_signal_cards(avoids,  "signal-card-avoid")
+        with sub1: render_signal_cards(buys,     "signal-card-buy")
+        with sub2: render_signal_cards(shorts,   "signal-card-short")
+        with sub3: render_signal_cards(avoids,   "signal-card-avoid")
+        with sub4: render_signal_cards(notrades, "signal-card-avoid")
 
 
 # ───────────────────────────────────────────────────────────────

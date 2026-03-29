@@ -3,6 +3,7 @@
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import logging
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from stock_mapper import StockMatch
 from technical_analyzer import TechnicalData, compute_technicals
 
 warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,15 +74,26 @@ _MCX_CONV: dict[str, float] = {
 }
 
 
+_usd_inr_cache: dict = {"rate": 84.0, "fetched_at": 0.0}
+
+
 def _fetch_usd_inr() -> float:
-    """Fetch live USD/INR rate from yfinance. Falls back to 84.0."""
+    """Fetch live USD/INR rate with 1-hour cache. Falls back to last good rate."""
+    now = time.time()
+    if now - _usd_inr_cache["fetched_at"] < 3600:
+        return _usd_inr_cache["rate"]
     try:
         rate = yf.Ticker("USDINR=X").fast_info.last_price
         if rate and 60 < rate < 120:
+            _usd_inr_cache["rate"] = float(rate)
+            _usd_inr_cache["fetched_at"] = now
             return float(rate)
-    except Exception:
-        pass
-    return 84.0
+        logger.warning("USD/INR rate out of range (%.2f), using cached %.2f",
+                       rate or 0, _usd_inr_cache["rate"])
+    except Exception as exc:
+        logger.warning("USD/INR fetch failed (%s), using cached %.2f",
+                       exc, _usd_inr_cache["rate"])
+    return _usd_inr_cache["rate"]
 
 
 @dataclass
@@ -97,6 +110,22 @@ class ImpactResult:
     reaction_status: str       # "Reacted" | "Underreacted" | "Overreacted"
     price_data: Optional[PriceData] = None
     notes: str = ""
+    news_type: str = "Ongoing"          # "Breaking" | "Ongoing" | "Rumor"
+
+
+def _validate_price_data(current: float, prev: float, day_vol: int, symbol: str) -> bool:
+    """Return False if price data looks stale, corrupted, or nonsensical."""
+    if current <= 0 or prev <= 0:
+        logger.warning("%s: zero/negative price (curr=%.2f, prev=%.2f)", symbol, current, prev)
+        return False
+    if day_vol == 0:
+        logger.warning("%s: zero volume — market closed or data stale", symbol)
+        return False
+    daily_change = abs(current - prev) / prev * 100
+    if daily_change > 30:
+        logger.warning("%s: suspicious %.1f%% daily move — possible data error", symbol, daily_change)
+        return False
+    return True
 
 
 def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
@@ -121,9 +150,11 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
                         h52w = float(_h["High"].max())
                         l52w = float(_h["Low"].min())
                         tech = compute_technicals(_h, fq["last_price"])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Fyers yfinance supplement failed for %s: %s", symbol, exc)
                 vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
+                if not _validate_price_data(fq["last_price"], fq["prev_close"], fq["volume"], symbol):
+                    return None
                 return PriceData(
                     symbol=symbol,
                     current_price=round(fq["last_price"], 2),
@@ -138,8 +169,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
                     currency="INR",
                     technical=tech,
                 )
-        except Exception:
-            pass  # fall through to yfinance
+        except Exception as exc:
+            logger.debug("Fyers quote failed for %s: %s — falling back to yfinance", symbol, exc)
 
     # ── Resolve ticker symbol ──────────────────────────────────
     is_mcx = symbol in _MCX_PROXY
@@ -191,6 +222,9 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
 
         lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, ""))
 
+        if not _validate_price_data(current, prev, day_vol, symbol):
+            return None
+
         return PriceData(
             symbol=symbol,
             current_price=round(current, 2),
@@ -207,7 +241,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
             lot_size=lot_s,
             lot_unit=lot_u,
         )
-    except Exception:
+    except Exception as exc:
+        logger.error("Price fetch failed for %s: %s", symbol, exc)
         return None
 
 
@@ -305,6 +340,7 @@ def analyze_impact(
             volume_ratio=vol_ratio,
             reaction_status=reaction,
             price_data=price_data,
+            news_type=getattr(sentiment, "news_type", "Ongoing"),
         ))
 
     order = {"EXTREME": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}

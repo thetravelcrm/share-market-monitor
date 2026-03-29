@@ -5,11 +5,14 @@
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -60,6 +63,18 @@ class TechnicalData:
     cci_20: float          = 0.0
     cci_oversold: bool     = False      # CCI < −100
     cci_overbought: bool   = False      # CCI > +100
+
+    # ── VWAP(5) — 5-day rolling VWAP ────────────────────────
+    vwap_5d: float         = 0.0
+    price_above_vwap: bool = False
+
+    # ── Market Regime ────────────────────────────────────────
+    market_regime: str     = "Unknown"  # "Trending"|"Sideways"|"HighVol"|"LowLiquidity"
+
+    # ── Smart Money / Volume Analysis ────────────────────────
+    volume_spike: bool     = False      # current vol > 2x 20-day avg
+    volume_dry: bool       = False      # current vol < 0.5x avg
+    pre_breakout: bool     = False      # rising OBV + BB squeeze + low vol
 
 
 # ─────────────────────────────────────────────────────────────
@@ -270,6 +285,32 @@ def _cci(
     return cci_val, cci_val < -100, cci_val > 100
 
 
+def _vwap(
+    high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series,
+    period: int = 5,
+) -> float:
+    """Rolling VWAP over `period` daily bars. Returns 0.0 if insufficient data."""
+    if len(close) < period or volume.iloc[-period:].sum() == 0:
+        return 0.0
+    typical = (high + low + close) / 3
+    vwap_val = (typical * volume).rolling(period).sum() / volume.rolling(period).sum()
+    val = vwap_val.iloc[-1]
+    return round(float(val), 2) if not pd.isna(val) else 0.0
+
+
+def _detect_regime(
+    adx_val: float, atr_pct: float, bb_squeeze: bool, vol_ratio: float,
+) -> str:
+    """Classify market regime from technical inputs."""
+    if vol_ratio < 0.5:
+        return "LowLiquidity"
+    if atr_pct > 4.0:
+        return "HighVol"
+    if adx_val > 25:
+        return "Trending"
+    return "Sideways"
+
+
 # ─────────────────────────────────────────────────────────────
 #  Main entry point
 # ─────────────────────────────────────────────────────────────
@@ -303,7 +344,7 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
         sma_50_val = close.rolling(50, min_periods=25).mean().iloc[-1]
         sma_50     = round(float(sma_50_val), 2) if not pd.isna(sma_50_val) else 0.0
 
-        # ── Trend ──────────────────────────────────────────────
+        # ── Trend (SMA50 fallback uses EMA approximation) ─────
         if sma_50 > 0:
             if current_price > sma_20 > sma_50:
                 trend = "Uptrend"
@@ -312,7 +353,12 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
             else:
                 trend = "Sideways"
         else:
-            if current_price > sma_20 * 1.01:
+            ema_50_approx = _ema(close, min(50, len(close)))
+            if ema_50_approx > 0 and current_price > sma_20 > ema_50_approx:
+                trend = "Uptrend"
+            elif ema_50_approx > 0 and current_price < sma_20 < ema_50_approx:
+                trend = "Downtrend"
+            elif current_price > sma_20 * 1.01:
                 trend = "Uptrend"
             elif current_price < sma_20 * 0.99:
                 trend = "Downtrend"
@@ -323,12 +369,16 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
         bb_lower, bb_upper, bb_pct = _bollinger(close)
         bb_squeeze = (bb_upper - bb_lower) / current_price < 0.02 if current_price > 0 else False
 
+        # ── ATR(14) — compute early for adaptive thresholds ────
+        atr_val, atr_pct_val = _atr(high, low, close, current_price)
+
         # ── Support / Resistance ───────────────────────────────
         support, resistance = _find_support_resistance(low, high, current_price)
 
-        # ── Near support / resistance (within 2%) ─────────────
-        near_support    = (current_price - support)    / current_price < 0.02 if current_price > 0 else False
-        near_resistance = (resistance - current_price) / current_price < 0.02 if current_price > 0 else False
+        # ── Near support / resistance (ATR-adaptive threshold) ─
+        sr_threshold = max(0.02, atr_pct_val / 100 * 1.5) if atr_pct_val > 0 else 0.02
+        near_support    = (current_price - support)    / current_price < sr_threshold if current_price > 0 else False
+        near_resistance = (resistance - current_price) / current_price < sr_threshold if current_price > 0 else False
 
         # ── EMA(9) ─────────────────────────────────────────────
         ema9_val       = _ema(close, 9)
@@ -339,9 +389,6 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
 
         # ── Stochastic(14,3) ───────────────────────────────────
         stoch_k, stoch_d, st_os, st_ob = _stochastic(close, high, low)
-
-        # ── ATR(14) ────────────────────────────────────────────
-        atr_val, atr_pct_val = _atr(high, low, close, current_price)
 
         # ── OBV Trend ──────────────────────────────────────────
         obv_t = _obv_trend(close, volume)
@@ -355,6 +402,21 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
         # ── CCI(20) ────────────────────────────────────────────
         cci_val, cci_os, cci_ob = _cci(high, low, close)
 
+        # ── VWAP(5) ───────────────────────────────────────────
+        vwap_val = _vwap(high, low, close, volume)
+        above_vwap = current_price > vwap_val if vwap_val > 0 else False
+
+        # ── Volume Analysis (smart money) ─────────────────────
+        avg_vol_20 = float(volume.iloc[-20:].mean()) if len(volume) >= 20 else float(volume.mean())
+        cur_vol    = float(volume.iloc[-1]) if len(volume) > 0 else 0.0
+        vol_ratio_tech = cur_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
+        v_spike    = vol_ratio_tech > 2.0
+        v_dry      = vol_ratio_tech < 0.5
+        pre_bo     = obv_t == "Rising" and bb_squeeze and vol_ratio_tech < 1.2
+
+        # ── Market Regime ─────────────────────────────────────
+        regime = _detect_regime(adx_val, atr_pct_val, bb_squeeze, vol_ratio_tech)
+
         return TechnicalData(
             rsi_14=rsi,
             sma_20=sma_20,
@@ -366,7 +428,6 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
             near_resistance=near_resistance,
             bb_pct=bb_pct,
             bb_squeeze=bb_squeeze,
-            # new indicators
             macd_line=macd_l,
             macd_signal=macd_s,
             macd_histogram=macd_h,
@@ -386,7 +447,14 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
             cci_20=cci_val,
             cci_oversold=cci_os,
             cci_overbought=cci_ob,
+            vwap_5d=vwap_val,
+            price_above_vwap=above_vwap,
+            market_regime=regime,
+            volume_spike=v_spike,
+            volume_dry=v_dry,
+            pre_breakout=pre_bo,
         )
 
-    except Exception:
+    except Exception as exc:
+        logger.error("compute_technicals failed: %s", exc)
         return None

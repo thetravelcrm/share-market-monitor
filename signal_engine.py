@@ -1,20 +1,23 @@
 # ─────────────────────────────────────────────────────────────
-#  signal_engine.py  –  Generate BUY / SELL / SHORT signals
+#  signal_engine.py  –  Generate BUY / SELL / SHORT / NO TRADE
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from config import RISK_REWARD_MIN, CONFIDENCE_FLOOR
 from impact_analyzer import ImpactResult, PriceData
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TradeSignal:
     symbol: str
     name: str
-    action: str              # BUY | SELL | SHORT | AVOID
+    action: str              # BUY | SELL | SHORT | AVOID | NO TRADE
     entry_low: float
     entry_high: float
     stop_loss: float
@@ -27,14 +30,60 @@ class TradeSignal:
     rationale: str
 
 
+# ─────────────────────────────────────────────────────────────
+#  Strict Trade Filter — rejects bad setups before scoring
+# ─────────────────────────────────────────────────────────────
+
+def _strict_filter(result: ImpactResult) -> Optional[str]:
+    """Return rejection reason if trade should be blocked, else None."""
+    pd = result.price_data
+    tech = pd.technical if pd else None
+
+    if not tech:
+        return "No technical data available"
+
+    # Volume must be above average
+    if result.volume_ratio < 1.0:
+        return f"Low volume ({result.volume_ratio:.1f}x avg)"
+
+    # Market regime must be favorable
+    regime = getattr(tech, "market_regime", "Unknown")
+    if regime == "LowLiquidity":
+        return "Low liquidity — no reliable price action"
+    if regime == "Sideways" and not tech.bb_squeeze:
+        return "Sideways market, no breakout setup"
+
+    # News + Technical must not strongly contradict
+    sent = result.sentiment_label
+    if sent == "Positive" and tech.trend == "Downtrend" and not tech.near_support:
+        _st = getattr(tech, "supertrend_bullish", None)
+        if _st is False:
+            return "Positive news contradicts downtrend + bearish SuperTrend"
+    if sent == "Negative" and tech.trend == "Uptrend" and not tech.near_resistance:
+        _st = getattr(tech, "supertrend_bullish", None)
+        if _st is True:
+            return "Negative news contradicts uptrend + bullish SuperTrend"
+
+    # Volume dry = no smart money interest
+    if getattr(tech, "volume_dry", False):
+        return "Volume dry (< 0.5x avg) — no institutional interest"
+
+    return None  # All clear
+
+
+# ─────────────────────────────────────────────────────────────
+#  Main signal generator
+# ─────────────────────────────────────────────────────────────
+
 def generate_signal(result: ImpactResult) -> Optional[TradeSignal]:
     """
     Generate a trade signal for a given impact result.
-    Returns None if no clear edge exists.
+    Returns None if no clear edge exists, or a NO TRADE signal
+    if the setup is explicitly rejected.
     """
     pd = result.price_data
     if pd is None or pd.current_price <= 0:
-        return _no_price_signal(result)
+        return None   # Never signal without confirmed price data
 
     price  = pd.current_price
     actual = result.actual_move_pct
@@ -51,6 +100,26 @@ def generate_signal(result: ImpactResult) -> Optional[TradeSignal]:
         direction = "SHORT"
     else:
         return None  # Neutral → no edge
+
+    # ── Strict Filter Gate ────────────────────────────────────
+    reject_reason = _strict_filter(result)
+    if reject_reason:
+        logger.info("NO TRADE %s: %s", result.symbol, reject_reason)
+        return TradeSignal(
+            symbol=result.symbol,
+            name=result.name,
+            action="NO TRADE",
+            entry_low=0.0,
+            entry_high=0.0,
+            stop_loss=0.0,
+            target1=0.0,
+            target2=0.0,
+            risk_reward=0.0,
+            confidence=0,
+            time_horizon="—",
+            edge_type="—",
+            rationale=f"NO TRADE: {reject_reason}",
+        )
 
     # ── Compute ATR-like buffer from 52w range ─────────────────
     range_52w  = pd.high_52w - pd.low_52w
@@ -82,6 +151,8 @@ def generate_signal(result: ImpactResult) -> Optional[TradeSignal]:
     # ── Confidence Score ──────────────────────────────────────
     confidence = _confidence_score(result, rr, vol_r, react)
     if confidence < CONFIDENCE_FLOOR:
+        logger.info("Signal rejected %s: confidence %d < floor %d",
+                     result.symbol, confidence, CONFIDENCE_FLOOR)
         return None
 
     # ── Time Horizon ──────────────────────────────────────────
@@ -100,7 +171,7 @@ def generate_signal(result: ImpactResult) -> Optional[TradeSignal]:
         symbol=result.symbol,
         name=result.name,
         action=direction if react != "Overreacted" else "AVOID",
-        entry_low=entry_low if direction == "BUY" else entry_low,
+        entry_low=entry_low,
         entry_high=entry_high,
         stop_loss=stop_loss,
         target1=target1,
@@ -112,6 +183,10 @@ def generate_signal(result: ImpactResult) -> Optional[TradeSignal]:
         rationale=rationale,
     )
 
+
+# ─────────────────────────────────────────────────────────────
+#  Confidence Scoring
+# ─────────────────────────────────────────────────────────────
 
 def _confidence_score(
     result: ImpactResult,
@@ -154,28 +229,30 @@ def _confidence_score(
     elif result.relation == "Sectoral":
         score += 4
 
+    # ── News type penalty (Rumor = -10 pts) ─────────────────
+    _news_type = getattr(result, "news_type", "Ongoing")
+    if _news_type == "Rumor":
+        score -= 10
+
     # ── Technical Analysis bonuses / penalties ────────────────
     tech = result.price_data.technical if result.price_data else None
     if tech:
-        # Oversold RSI on BUY — strong entry confirmation (+15 pts)
+        # RSI extremes (+15 pts)
         if direction == "BUY" and tech.rsi_14 < 35:
             score += 15
-        # Overbought RSI on SHORT — strong entry confirmation (+15 pts)
         elif direction == "SHORT" and tech.rsi_14 > 65:
             score += 15
 
-        # Near support on BUY (+10 pts)
+        # Near support/resistance (+10 pts)
         if direction == "BUY" and tech.near_support:
             score += 10
-        # Near resistance on SHORT (+10 pts)
         elif direction == "SHORT" and tech.near_resistance:
             score += 10
 
-        # Trend confirms direction (+8 pts)
+        # Trend confirms direction (+8 pts / -10 pts)
         if (direction == "BUY"   and tech.trend == "Uptrend") or \
            (direction == "SHORT" and tech.trend == "Downtrend"):
             score += 8
-        # Trend opposes direction — penalty (-10 pts)
         elif (direction == "BUY"   and tech.trend == "Downtrend") or \
              (direction == "SHORT" and tech.trend == "Uptrend"):
             score -= 10
@@ -185,14 +262,13 @@ def _confidence_score(
             score += 5
 
         # MACD confirmation (+10 pts alignment, -10 pts contradiction)
-        # Only score if MACD data is present (macd_line != 0)
         _macd_line = getattr(tech, "macd_line", 0.0)
         _macd_bull = getattr(tech, "macd_bullish", False)
         if _macd_line != 0.0:
             if direction == "BUY"   and _macd_bull:       score += 10
-            elif direction == "BUY"   and not _macd_bull: score -= 10  # contradiction penalty
+            elif direction == "BUY"   and not _macd_bull: score -= 10
             elif direction == "SHORT" and not _macd_bull: score += 10
-            elif direction == "SHORT" and _macd_bull:     score -= 10  # contradiction penalty
+            elif direction == "SHORT" and _macd_bull:     score -= 10
 
         # Stochastic extremes (+8 pts)
         if direction == "BUY"   and getattr(tech, "stoch_oversold",  False): score += 8
@@ -204,7 +280,6 @@ def _confidence_score(
         elif direction == "SHORT" and _obv == "Falling": score += 5
 
         # EMA(9) price position (+5 pts alignment, -5 pts contradiction)
-        # Only score if EMA9 data is present (ema_9 != 0)
         _ema9 = getattr(tech, "ema_9", 0.0)
         _above = getattr(tech, "price_above_ema9", False)
         if _ema9 != 0.0:
@@ -213,17 +288,15 @@ def _confidence_score(
             elif direction == "SHORT" and not _above: score += 5
             elif direction == "SHORT" and _above:     score -= 5
 
-        # ADX trend strength (+10 aligns when trending, -8 opposes when trending)
+        # ADX trend strength (direction-agnostic — avoids double-scoring)
+        _adx_val = getattr(tech, "adx_14", 0.0)
         _adx_trending = getattr(tech, "adx_trending", False)
         if _adx_trending:
-            if (direction == "BUY"   and tech.trend == "Uptrend") or \
-               (direction == "SHORT" and tech.trend == "Downtrend"):
-                score += 10
-            elif (direction == "BUY"   and tech.trend == "Downtrend") or \
-                 (direction == "SHORT" and tech.trend == "Uptrend"):
-                score -= 8
+            score += 5   # strong trend bonus
+        elif _adx_val > 0:
+            score -= 3   # weak/choppy trend penalty
 
-        # SuperTrend (+12 aligned, -12 contradiction — only when data present)
+        # SuperTrend (+12 aligned, -12 contradiction)
         _st = getattr(tech, "supertrend_bullish", None)
         if _st is not None:
             if direction == "BUY"   and _st:       score += 12
@@ -235,10 +308,37 @@ def _confidence_score(
         if direction == "BUY"   and getattr(tech, "cci_oversold",   False): score += 8
         elif direction == "SHORT" and getattr(tech, "cci_overbought", False): score += 8
 
+        # VWAP alignment (+5 pts)
+        _vwap = getattr(tech, "vwap_5d", 0.0)
+        if _vwap > 0:
+            _above_vwap = getattr(tech, "price_above_vwap", False)
+            if direction == "BUY"   and _above_vwap:     score += 5
+            elif direction == "SHORT" and not _above_vwap: score += 5
+
+        # Volume spike aligned with direction (+8 pts)
+        if getattr(tech, "volume_spike", False):
+            score += 8
+
+        # Pre-breakout accumulation (+10 pts)
+        if getattr(tech, "pre_breakout", False):
+            score += 10
+
+        # Market regime penalty
+        _regime = getattr(tech, "market_regime", "Unknown")
+        if _regime == "HighVol":
+            score -= 10
+
     return max(0, min(score, 100))
 
 
+# ─────────────────────────────────────────────────────────────
+#  Time Horizon
+# ─────────────────────────────────────────────────────────────
+
 def _time_horizon(result: ImpactResult) -> str:
+    _news_type = getattr(result, "news_type", "Ongoing")
+    if _news_type == "Breaking":
+        return "Intraday"
     if result.impact_strength in ("EXTREME", "HIGH"):
         return "Intraday / Short-term"
     if result.reaction_status == "Underreacted":
@@ -247,6 +347,10 @@ def _time_horizon(result: ImpactResult) -> str:
         return "Swing (1–3 weeks)"
     return "Short-term (3–7 days)"
 
+
+# ─────────────────────────────────────────────────────────────
+#  Rationale Builder
+# ─────────────────────────────────────────────────────────────
 
 def _build_rationale(result, rr, conf, horizon, edge) -> str:
     parts = []
@@ -258,14 +362,17 @@ def _build_rationale(result, rr, conf, horizon, edge) -> str:
     tech = result.price_data.technical if result.price_data else None
     if tech:
         parts.append(f"RSI {tech.rsi_14:.0f} ({tech.trend})")
+        regime = getattr(tech, "market_regime", "Unknown")
+        if regime != "Unknown":
+            parts.append(f"regime: {regime}")
         if tech.near_support:
-            parts.append("near support ✓")
+            parts.append("near support")
         if tech.near_resistance:
-            parts.append("near resistance ✓")
+            parts.append("near resistance")
         if tech.bb_squeeze:
-            parts.append("BB squeeze ⚡")
+            parts.append("BB squeeze")
         if getattr(tech, "macd_bullish", None) is not None and tech.macd_line != 0.0:
-            parts.append("MACD ↑ bullish" if tech.macd_bullish else "MACD ↓ bearish")
+            parts.append("MACD " + ("bullish" if tech.macd_bullish else "bearish"))
         if getattr(tech, "stoch_oversold", False):
             parts.append(f"Stoch {tech.stoch_k:.0f} oversold")
         elif getattr(tech, "stoch_overbought", False):
@@ -281,35 +388,17 @@ def _build_rationale(result, rr, conf, horizon, edge) -> str:
             parts.append(f"ADX {adx_v:.0f}{'★' if adx_v > 25 else ''}")
         st = getattr(tech, "supertrend_bullish", None)
         if st is not None:
-            parts.append("ST ↑" if st else "ST ↓")
+            parts.append("ST " + ("bullish" if st else "bearish"))
         cci_v = getattr(tech, "cci_20", 0.0)
         if getattr(tech, "cci_oversold", False):
             parts.append(f"CCI {cci_v:.0f} oversold")
         elif getattr(tech, "cci_overbought", False):
             parts.append(f"CCI {cci_v:.0f} overbought")
+        vwap = getattr(tech, "vwap_5d", 0.0)
+        if vwap > 0:
+            parts.append("VWAP " + ("above" if getattr(tech, "price_above_vwap", False) else "below"))
+        if getattr(tech, "volume_spike", False):
+            parts.append("VOL SPIKE")
+        if getattr(tech, "pre_breakout", False):
+            parts.append("PRE-BREAKOUT")
     return " | ".join(parts)
-
-
-def _no_price_signal(result: ImpactResult) -> Optional[TradeSignal]:
-    """Fallback signal when live price is unavailable."""
-    if result.impact_strength not in ("HIGH", "EXTREME"):
-        return None
-    if result.sentiment_label == "Neutral":
-        return None
-
-    direction = "BUY" if result.sentiment_label == "Positive" else "SHORT"
-    return TradeSignal(
-        symbol=result.symbol,
-        name=result.name,
-        action=direction,
-        entry_low=0.0,
-        entry_high=0.0,
-        stop_loss=0.0,
-        target1=0.0,
-        target2=0.0,
-        risk_reward=0.0,
-        confidence=30,
-        time_horizon="Short-term",
-        edge_type="Macro",
-        rationale=f"No live price – {direction} bias from {result.impact_strength} impact news",
-    )

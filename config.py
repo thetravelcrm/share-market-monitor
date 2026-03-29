@@ -2,6 +2,12 @@
 #  config.py  –  NSE India Focus: Top ~300 stocks + ETFs + MCX
 #  Global news feeds → Indian market impact only
 # ─────────────────────────────────────────────────────────────
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
 
 # ── RSS News Sources (global + Indian) ───────────────────────
 NEWS_FEEDS = {
@@ -49,8 +55,8 @@ UNDERREACTION = {
 }
 
 # ── Signal Engine Parameters ──────────────────────────────────
-RISK_REWARD_MIN  = 1.5
-CONFIDENCE_FLOOR = 40
+RISK_REWARD_MIN  = 2.0
+CONFIDENCE_FLOOR = 55
 
 # ══════════════════════════════════════════════════════════════
 #  NSE INDIA STOCK UNIVERSE
@@ -514,7 +520,7 @@ CATEGORY_KEYWORDS = {
     "Earnings":    ["q1","q2","q3","q4","quarterly","results","profit","revenue","earnings","net profit","ebitda","pat","eps"],
     "Macro":       ["rbi","fed","gdp","inflation","repo rate","interest rate","cpi","iip","fiscal","monetary policy","budget"],
     "Geopolitical":["war","conflict","sanction","tension","geopolitical","ukraine","russia","china","taiwan","middle east","iran","us-india"],
-    "Sector":      ["sector","industry","auto sales","pmi","capacity","output","production","iip"],
+    "Sector":      ["sector","industry","auto sales","pmi","capacity","output","production"],
     "Company":     ["acquisition","merger","buyback","dividend","deal","contract","order","launch","ipo","stake","joint venture","jv"],
     "Regulatory":  ["sebi","cci","penalty","fine","nclat","court","regulatory","ban","approval","licence","usfda","who","fda"],
     "Commodity":   ["gold","silver","crude","oil","copper","zinc","aluminium","nickel","mcx","comex","commodity"],
@@ -539,4 +545,26 @@ HISTORICAL_REACTIONS = {
     ("Sector",      "Positive", "MEDIUM"):  +2.0,
     ("Commodity",   "Positive", "HIGH"):    +4.0,
     ("Commodity",   "Negative", "HIGH"):    -4.0,
+    # ── Extended coverage (reduce fallback to score × 5.0) ──
+    ("Earnings",    "Positive", "LOW"):     +1.5,
+    ("Earnings",    "Negative", "LOW"):     -1.5,
+    ("Macro",       "Positive", "EXTREME"): +4.0,
+    ("Macro",       "Positive", "MEDIUM"):  +1.5,
+    ("Macro",       "Negative", "EXTREME"): -4.5,
+    ("Macro",       "Negative", "MEDIUM"):  -1.8,
+    ("Company",     "Positive", "MEDIUM"):  +2.5,
+    ("Company",     "Negative", "EXTREME"): -8.0,
+    ("Company",     "Negative", "MEDIUM"):  -3.0,
+    ("Regulatory",  "Positive", "MEDIUM"):  +1.5,
+    ("Regulatory",  "Negative", "EXTREME"): -6.0,
+    ("Regulatory",  "Negative", "MEDIUM"):  -2.5,
+    ("Geopolitical","Negative", "HIGH"):    -2.5,
+    ("Geopolitical","Positive", "HIGH"):    +1.5,
+    ("Sector",      "Positive", "HIGH"):    +3.0,
+    ("Sector",      "Negative", "HIGH"):    -2.5,
+    ("Sector",      "Negative", "MEDIUM"):  -1.5,
+    ("Commodity",   "Positive", "EXTREME"): +6.0,
+    ("Commodity",   "Negative", "EXTREME"): -6.0,
+    ("Commodity",   "Positive", "MEDIUM"):  +2.0,
+    ("Commodity",   "Negative", "MEDIUM"):  -2.0,
 }
