@@ -1664,6 +1664,18 @@ with tab_backtest:
 # ───────────────────────────────────────────────────────────────
 #  TAB 9  —  MPHR (Market Prediction History & Results)
 # ───────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def _mphr_live_price(symbol: str) -> float:
+    """Fetch latest NSE price for MPHR current-price column (cached 5 min)."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(f"{symbol}.NS")
+        p = t.fast_info.last_price
+        return float(p) if p and p > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 with tab_history:
     history = load_history()
 
@@ -1790,20 +1802,59 @@ with tab_history:
                 _ret_str  = f' <span style="color:{"#00ff88" if (_ret_pct or 0) >= 0 else "#ff4455"};font-size:11px">{_ret_pct:+.2f}%</span>' if _ret_pct is not None else ""
 
             _pred_px = _p.get("prediction_price", 0)
-            _pred_str = f"₹{_pred_px:,.2f}" if _pred_px > 0 else "—"
+            _entry_lo = _p.get("entry_low", 0)
+            _entry_hi = _p.get("entry_high", 0)
+            _stop_px  = _p.get("stop_loss", 0)
+            _tgt1     = _p.get("target1", 0)
+            _tgt2     = _p.get("target2", 0)
             _sector   = _p.get("sector", "")
-            _name     = _p.get("name", _p.get("symbol", ""))
+            _sym      = _p.get("symbol", "")
+            _name     = _p.get("name", _sym)
+
+            # Entry range string
+            if _entry_lo > 0 and _entry_hi > 0 and _entry_lo != _entry_hi:
+                _entry_str = f"₹{_entry_lo:,.2f}–{_entry_hi:,.2f}"
+            elif _pred_px > 0:
+                _entry_str = f"₹{_pred_px:,.2f}"
+            else:
+                _entry_str = "—"
+
+            _stop_str = f"₹{_stop_px:,.2f}" if _stop_px > 0 else "—"
+            _tgt_str  = f"₹{_tgt1:,.2f} / ₹{_tgt2:,.2f}" if _tgt1 > 0 else "—"
+
+            # Current live price + open P&L (only for BUY/SHORT with no outcome yet)
+            _cur_px = 0.0
+            _pnl_str = ""
+            if _act in ("BUY", "SHORT") and not _p.get("outcome") and _pred_px > 0:
+                _cur_px = _mphr_live_price(_sym)
+                if _cur_px > 0:
+                    _pnl_pct = (_cur_px - _pred_px) / _pred_px * 100
+                    if _act == "SHORT":
+                        _pnl_pct = -_pnl_pct
+                    _pnl_col = "#00ff88" if _pnl_pct >= 0 else "#ff4455"
+                    _pnl_str = f'<span style="color:{_pnl_col};font-weight:700">{_pnl_pct:+.2f}%</span>'
+
+            _cur_str = f"₹{_cur_px:,.2f}" if _cur_px > 0 else "—"
 
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
-                f'padding:8px 12px;border-bottom:1px solid #1a1f3a;font-size:13px">'
+                f'<div style="padding:8px 12px;border-bottom:1px solid #1a1f3a;font-size:13px">'
+                # Row 1: timestamp + symbol + badges + outcome
+                f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
                 f'  <span style="color:#6b7280;font-size:11px;min-width:115px">{_ts}</span>'
-                f'  <span style="font-weight:700;min-width:80px">{_p.get("symbol","")}</span>'
+                f'  <span style="font-weight:700;min-width:80px">{_sym}</span>'
                 f'  <span style="color:#a8b0d0;font-size:11px">{_name[:22]}</span>'
                 f'  {_act_badge} {_imp_badge}'
                 f'  <span style="color:#6b7280;font-size:11px">{_sector}</span>'
-                f'  <span style="color:#a8b0d0">@ {_pred_str}</span>'
                 f'  {_oc_badge}{_ret_str}'
+                f'</div>'
+                # Row 2: price details
+                f'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;font-size:11px;color:#6b7280">'
+                f'  <span>Entry <b style="color:#ffd700">{_entry_str}</b></span>'
+                f'  <span>Stop <b style="color:#ff4455">{_stop_str}</b></span>'
+                f'  <span>Exit Target <b style="color:#00ff88">{_tgt_str}</b></span>'
+                f'  <span>Current <b style="color:#00d4ff">{_cur_str}</b></span>'
+                + (f'  <span>Open P&amp;L {_pnl_str}</span>' if _pnl_str else "")
+                + f'</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
