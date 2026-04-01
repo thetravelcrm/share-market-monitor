@@ -87,10 +87,11 @@ def get_fyers_model(access_token: str):
 
 
 def is_auto_login_configured() -> bool:
-    """True if TOTP secret + PIN are present in Streamlit secrets."""
+    """True if FYERS_ID, TOTP secret + PIN are present in Streamlit secrets."""
     try:
         import streamlit as st
         return bool(
+            st.secrets.get("FYERS_ID") and
             st.secrets.get("FYERS_TOTP_SECRET") and
             st.secrets.get("FYERS_PIN") and
             is_configured()
@@ -121,8 +122,15 @@ def auto_login() -> tuple[Optional[str], str]:
     except Exception:
         return None, "Could not read Streamlit secrets"
 
+    try:
+        fyers_id = st.secrets.get("FYERS_ID", "")   # user's Fyers login ID (e.g. XY12345)
+    except Exception:
+        fyers_id = ""
+
     if not cid or not sk:
         return None, "FYERS_CLIENT_ID or FYERS_SECRET_KEY missing in secrets"
+    if not fyers_id:
+        return None, "FYERS_ID missing in secrets (your Fyers login ID, e.g. XY12345)"
     if not totp_secret:
         return None, "FYERS_TOTP_SECRET missing in secrets"
     if not pin:
@@ -131,9 +139,9 @@ def auto_login() -> tuple[Optional[str], str]:
     BASE = "https://api-t2.fyers.in/vagator/v2"
     sess = requests.Session()
 
-    # Step 1 — initiate login
+    # Step 1 — initiate login (fy_id = user's Fyers login ID, not API client_id)
     try:
-        r1 = sess.post(f"{BASE}/send_login_otp", json={"fy_id": cid, "app_id": "2"}, timeout=10)
+        r1 = sess.post(f"{BASE}/send_login_otp", json={"fy_id": fyers_id, "app_id": "2"}, timeout=10)
         d1 = r1.json()
         if d1.get("code") != 200:
             return None, f"Step1 send_login_otp failed: {d1}"
@@ -175,7 +183,7 @@ def auto_login() -> tuple[Optional[str], str]:
             "https://api-t1.fyers.in/api/v3/token",
             headers={"Authorization": f"{cid}:{vagator_token}"},
             json={
-                "fyers_id":      cid,
+                "fyers_id":      fyers_id,
                 "app_id":        app_id_short,
                 "redirect_uri":  REDIRECT_URI,
                 "appType":       "100",
