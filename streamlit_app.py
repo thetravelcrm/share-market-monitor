@@ -438,11 +438,11 @@ with st.sidebar:
                 if saved:
                     st.session_state["fyers_token"] = saved
 
-            # Auto-connect silently at 8:20–9:30 IST on weekdays (no button click)
+            # Auto-connect silently during all market hours (8:20 AM – 9:30 PM IST) on weekdays
             if not st.session_state.get("fyers_token") and is_auto_login_configured():
                 _ist_ac  = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
                 _ac_mins = _ist_ac.hour * 60 + _ist_ac.minute
-                if _ist_ac.weekday() < 5 and 8 * 60 + 20 <= _ac_mins <= 9 * 60 + 30:
+                if _ist_ac.weekday() < 5 and 8 * 60 + 20 <= _ac_mins <= 21 * 60 + 30:
                     _tok_ac, _ = auto_login()
                     if _tok_ac:
                         st.session_state["fyers_token"] = _tok_ac
@@ -593,6 +593,17 @@ if "result"   not in st.session_state: st.session_state["result"]   = None
 if "last_run" not in st.session_state: st.session_state["last_run"] = None
 
 def do_run(slot_label: str = "Manual"):
+    # Ensure Fyers is connected before running — silently reconnect if token missing
+    try:
+        from fyers_fetcher import is_auto_login_configured as _fyal_cfg, auto_login as _fyal
+        if not st.session_state.get("fyers_token") and _fyal_cfg():
+            _t, _ = _fyal()
+            if _t:
+                st.session_state["fyers_token"] = _t
+                _fyers_save(_t)
+    except Exception:
+        pass
+
     prog  = st.progress(0, text="Starting…")
     label = st.empty()
     def cb(step, pct):
