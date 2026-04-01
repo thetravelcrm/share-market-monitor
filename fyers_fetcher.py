@@ -143,7 +143,7 @@ def auto_login() -> tuple[Optional[str], str]:
     try:
         r1 = sess.post(f"{BASE}/send_login_otp", json={"fy_id": fyers_id, "app_id": "2"}, timeout=10)
         d1 = r1.json()
-        if d1.get("code") != 200:
+        if d1.get("s") != "ok":
             return None, f"Step1 send_login_otp failed: {d1}"
         request_key = d1["request_key"]
     except Exception as e:
@@ -155,7 +155,7 @@ def auto_login() -> tuple[Optional[str], str]:
         r2 = sess.post(f"{BASE}/verify_otp",
                        json={"request_key": request_key, "otp": totp_code}, timeout=10)
         d2 = r2.json()
-        if d2.get("code") != 200:
+        if d2.get("s") != "ok":
             return None, f"Step2 verify_otp failed: {d2}"
         request_key = d2["request_key"]
     except Exception as e:
@@ -168,7 +168,7 @@ def auto_login() -> tuple[Optional[str], str]:
                        json={"request_key": request_key, "identity_type": "pin",
                              "identifier": pin_hash}, timeout=10)
         d3 = r3.json()
-        if d3.get("code") != 200:
+        if d3.get("s") != "ok":
             return None, f"Step3 verify_pin failed: {d3}"
         vagator_token = d3.get("data", {}).get("access_token", "")
         if not vagator_token:
