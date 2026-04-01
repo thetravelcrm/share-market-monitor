@@ -515,7 +515,7 @@ if st.session_state.get("_app_version") != _APP_VERSION:
 if "result"   not in st.session_state: st.session_state["result"]   = None
 if "last_run" not in st.session_state: st.session_state["last_run"] = None
 
-def do_run():
+def do_run(slot_label: str = "Manual"):
     prog  = st.progress(0, text="Starting…")
     label = st.empty()
     def cb(step, pct):
@@ -525,6 +525,9 @@ def do_run():
     prog.empty(); label.empty()
     st.session_state["result"]   = result
     st.session_state["last_run"] = datetime.now(tz=timezone.utc)
+    # Save every run to MPHR history (manual + scheduled)
+    sigs_with_impact = [(s, imp) for _, imp, s in result.all_signals]
+    append_run(slot_label, sigs_with_impact)
 
 if run_btn:
     do_run()
@@ -557,11 +560,7 @@ def _check_schedule() -> None:
         # Without this, opening the app at 2 PM would trigger the 9:15 slot.
         if slot_mins <= cur < slot_mins + 30 and not today_log.get(label, False):
             today_log[label] = True   # mark before run to prevent double-fire
-            do_run()
-            new_result = st.session_state.get("result")
-            if new_result:
-                sigs_with_impact = [(s, imp) for _, imp, s in new_result.all_signals]
-                append_run(label, sigs_with_impact)
+            do_run(slot_label=label)  # saves to MPHR history inside do_run()
             st.rerun()
 
 _check_schedule()
@@ -1536,7 +1535,7 @@ with tab_history:
     for _entry in history:
         _rt = _entry.get("run_time", "")
         for _s in _entry.get("signals", []):
-            if _s.get("action") not in ("BUY", "SHORT"):
+            if _s.get("action") not in ("BUY", "SHORT", "NO TRADE"):
                 continue
             if _s.get("impact_strength") not in ("HIGH", "EXTREME"):
                 continue
@@ -1562,7 +1561,7 @@ with tab_history:
         f'<div class="card-title">📊 MPHR — Market Prediction History &amp; Results</div>'
         f'<div style="color:#6b7280;font-size:12px;margin-bottom:12px">'
         f'30-day window: {_30d_start.strftime("%d %b")} – {_30d_end.strftime("%d %b %Y")} IST'
-        f' &nbsp;·&nbsp; Only <b>HIGH</b> &amp; <b>EXTREME</b> impact BUY/SHORT signals tracked'
+        f' &nbsp;·&nbsp; <b>HIGH</b> &amp; <b>EXTREME</b> impact signals tracked (BUY / SHORT / NO TRADE)'
         f'</div>'
         f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px">'
         f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
@@ -1586,9 +1585,8 @@ with tab_history:
 
     if not _all_preds:
         st.info(
-            "No HIGH/EXTREME impact predictions yet. Signals are archived at the scheduled "
-            "slots: **09:15**, **13:00**, **15:20**, **17:30**, and **21:00 IST**. "
-            "Only BUY/SHORT signals with HIGH or EXTREME impact appear here."
+            "No HIGH/EXTREME impact signals yet. Signals are archived every time you click "
+            "**Run Analysis** and at scheduled slots: **09:15**, **13:00**, **15:20**, **17:30**, **21:00 IST**."
         )
     else:
         # ── Filters ──────────────────────────────────────────
@@ -1599,7 +1597,7 @@ with tab_history:
             )
         with _fc2:
             _act_filter = st.multiselect(
-                "Action", ["BUY", "SHORT"], default=["BUY", "SHORT"], key="mphr_act"
+                "Action", ["BUY", "SHORT", "NO TRADE"], default=["BUY", "SHORT", "NO TRADE"], key="mphr_act"
             )
 
         _filtered = [
@@ -1625,14 +1623,12 @@ with tab_history:
             _ts      = _rt_ist.strftime("%d %b %H:%M IST")
 
             _act  = _p.get("action", "")
-            _act_col = "#00ff88" if _act == "BUY" else "#ff4455"
-            _act_badge = (
-                f'<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;'
-                f'padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">{_act}</span>'
-                if _act == "BUY" else
-                f'<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;'
-                f'padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">{_act}</span>'
-            )
+            if _act == "BUY":
+                _act_badge = '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">BUY</span>'
+            elif _act == "SHORT":
+                _act_badge = '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">SHORT</span>'
+            else:
+                _act_badge = '<span style="background:rgba(255,255,255,0.04);border:1px solid #555;color:#888;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">NO TRADE</span>'
 
             _imp  = _p.get("impact_strength", "")
             _imp_colors = {"EXTREME": "#ff4455", "HIGH": "#ffaa33", "MEDIUM": "#00d4ff", "LOW": "#6b7280"}
@@ -1644,8 +1640,12 @@ with tab_history:
 
             _oc = _p.get("outcome")
             _ret_pct = _p.get("outcome_return_pct")
-            _oc_badge = _outcome_badge.get(_oc, _pending_badge)
-            _ret_str  = f' <span style="color:{"#00ff88" if (_ret_pct or 0) >= 0 else "#ff4455"};font-size:11px">{_ret_pct:+.2f}%</span>' if _ret_pct is not None else ""
+            if _act == "NO TRADE":
+                _oc_badge = '<span style="background:rgba(255,255,255,0.03);border:1px solid #444;color:#666;padding:2px 8px;border-radius:4px;font-size:11px">N/A</span>'
+                _ret_str  = ""
+            else:
+                _oc_badge = _outcome_badge.get(_oc, _pending_badge)
+                _ret_str  = f' <span style="color:{"#00ff88" if (_ret_pct or 0) >= 0 else "#ff4455"};font-size:11px">{_ret_pct:+.2f}%</span>' if _ret_pct is not None else ""
 
             _pred_px = _p.get("prediction_price", 0)
             _pred_str = f"₹{_pred_px:,.2f}" if _pred_px > 0 else "—"
