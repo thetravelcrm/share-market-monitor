@@ -1198,9 +1198,21 @@ with tab_signals:
 with tab_mcx:
     _mcx_signals = [(item, imp, sig) for item, imp, sig in result.all_signals
                     if _is_mcx_metal(imp)]
-    _mcx_impacts = [(item, sent, [r for r in impacts if _is_mcx_metal(r)])
-                    for item, sent, impacts in result.news_impacts
-                    if any(_is_mcx_metal(r) for r in impacts)]
+
+    # Build MCX impacts deduped by symbol (keep highest impact strength per symbol)
+    _mcx_sym_best: dict = {}  # symbol → (item, sent, imp)
+    for _mi_item, _mi_sent, _mi_impacts in result.news_impacts:
+        for _mi_r in _mi_impacts:
+            if not _is_mcx_metal(_mi_r):
+                continue
+            _prev = _mcx_sym_best.get(_mi_r.symbol)
+            if _prev is None or (
+                _IMPACT_ORDER.get(_mi_r.impact_strength, 0) >
+                _IMPACT_ORDER.get(_prev[2].impact_strength, 0)
+            ):
+                _mcx_sym_best[_mi_r.symbol] = (_mi_item, _mi_sent, _mi_r)
+    _mcx_impacts = list(_mcx_sym_best.values())
+    _mcx_impacts.sort(key=lambda x: _IMPACT_ORDER.get(x[2].impact_strength, 0), reverse=True)
 
     if not _mcx_signals and not _mcx_impacts:
         st.info("No MCX metal signals in current analysis. Tracked metals: "
@@ -1208,35 +1220,34 @@ with tab_mcx:
     else:
         if _mcx_impacts:
             st.markdown("#### 🔥 Top Impacted Metals")
-            for _mi_item, _mi_sent, _mi_imps in _mcx_impacts[:5]:
-                for _mi in _mi_imps[:2]:
-                    _lot_s  = getattr(_mi.price_data, "lot_size", 1) if _mi.price_data else 1
-                    _lot_u  = getattr(_mi.price_data, "lot_unit", "")  if _mi.price_data else ""
-                    _price  = _mi.price_data.current_price if _mi.price_data else 0.0
-                    _cv     = round(_price * _lot_s, 0) if _lot_s > 1 and _price > 0 else 0
-                    _imp_c  = {"EXTREME":"badge-extreme","HIGH":"badge-high",
-                               "MEDIUM":"badge-medium","LOW":"badge-low"}.get(_mi.impact_strength,"badge-teal")
-                    _lot_info = f" · Lot: {_lot_s} {_lot_u}" if _lot_s > 1 else ""
-                    _cv_info  = f" · Contract ₹{_cv:,.0f}" if _cv > 0 else ""
-                    _mv_col   = "#00ff88" if _mi.actual_move_pct >= 0 else "#ff4455"
-                    _price_str = f"₹{_price:,.1f}" if _price > 0 else "—"
-                    st.markdown(
-                        f'<div class="card" style="margin-bottom:8px">'
-                        f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-                        f'  {badge(_mi.impact_strength, _imp_c)}'
-                        f'  <span style="font-weight:700;color:#ffd700">{_mi.symbol}</span>'
-                        f'  <span style="color:#a8b0d0">— {_mi.name}</span>'
-                        f'  {badge(_mi.sector, "badge-gold")}'
-                        f'</div>'
-                        f'<div style="margin-top:4px;font-size:12px;color:#a8b0d0">'
-                        f'  {_price_str}{_lot_info}{_cv_info}'
-                        f'  · Move: <span style="color:{_mv_col}">{_mi.actual_move_pct:+.2f}%</span>'
-                        f'  · Expected: {_mi.expected_move_pct:+.1f}%'
-                        f'</div>'
-                        f'<div style="margin-top:4px;font-size:11px;color:#6b7280">{_mi_item.title[:90]}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
+            for _mi_item, _mi_sent, _mi in _mcx_impacts[:8]:
+                _lot_s  = getattr(_mi.price_data, "lot_size", 1) if _mi.price_data else 1
+                _lot_u  = getattr(_mi.price_data, "lot_unit", "")  if _mi.price_data else ""
+                _price  = _mi.price_data.current_price if _mi.price_data else 0.0
+                _cv     = round(_price * _lot_s, 0) if _lot_s > 1 and _price > 0 else 0
+                _imp_c  = {"EXTREME":"badge-extreme","HIGH":"badge-high",
+                           "MEDIUM":"badge-medium","LOW":"badge-low"}.get(_mi.impact_strength,"badge-teal")
+                _lot_info = f" · Lot: {_lot_s} {_lot_u}" if _lot_s > 1 else ""
+                _cv_info  = f" · Contract ₹{_cv:,.0f}" if _cv > 0 else ""
+                _mv_col   = "#00ff88" if _mi.actual_move_pct >= 0 else "#ff4455"
+                _price_str = f"₹{_price:,.1f}" if _price > 0 else "—"
+                st.markdown(
+                    f'<div class="card" style="margin-bottom:8px">'
+                    f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+                    f'  {badge(_mi.impact_strength, _imp_c)}'
+                    f'  <span style="font-weight:700;color:#ffd700">{_mi.symbol}</span>'
+                    f'  <span style="color:#a8b0d0">— {_mi.name}</span>'
+                    f'  {badge(_mi.sector, "badge-gold")}'
+                    f'</div>'
+                    f'<div style="margin-top:4px;font-size:12px;color:#a8b0d0">'
+                    f'  {_price_str}{_lot_info}{_cv_info}'
+                    f'  · Move: <span style="color:{_mv_col}">{_mi.actual_move_pct:+.2f}%</span>'
+                    f'  · Expected: {_mi.expected_move_pct:+.1f}%'
+                    f'</div>'
+                    f'<div style="margin-top:4px;font-size:11px;color:#6b7280">{_mi_item.title[:90]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
         if _mcx_signals:
             st.markdown("#### 🎯 Metal Signals")
@@ -1822,19 +1833,18 @@ with tab_history:
             _stop_str = f"₹{_stop_px:,.2f}" if _stop_px > 0 else "—"
             _tgt_str  = f"₹{_tgt1:,.2f} / ₹{_tgt2:,.2f}" if _tgt1 > 0 else "—"
 
-            # Current live price + open P&L (only for BUY/SHORT with no outcome yet)
-            _cur_px = 0.0
-            _pnl_str = ""
-            if _act in ("BUY", "SHORT") and not _p.get("outcome") and _pred_px > 0:
-                _cur_px = _mphr_live_price(_sym)
-                if _cur_px > 0:
-                    _pnl_pct = (_cur_px - _pred_px) / _pred_px * 100
-                    if _act == "SHORT":
-                        _pnl_pct = -_pnl_pct
-                    _pnl_col = "#00ff88" if _pnl_pct >= 0 else "#ff4455"
-                    _pnl_str = f'<span style="color:{_pnl_col};font-weight:700">{_pnl_pct:+.2f}%</span>'
-
+            # Current live price — always fetch for all symbols
+            _cur_px  = _mphr_live_price(_sym)
             _cur_str = f"₹{_cur_px:,.2f}" if _cur_px > 0 else "—"
+
+            # Open P&L only for unresolved BUY/SHORT with a known entry price
+            _pnl_str = ""
+            if _act in ("BUY", "SHORT") and not _p.get("outcome") and _pred_px > 0 and _cur_px > 0:
+                _pnl_pct = (_cur_px - _pred_px) / _pred_px * 100
+                if _act == "SHORT":
+                    _pnl_pct = -_pnl_pct
+                _pnl_col = "#00ff88" if _pnl_pct >= 0 else "#ff4455"
+                _pnl_str = f'<span style="color:{_pnl_col};font-weight:700">{_pnl_pct:+.2f}%</span>'
 
             st.markdown(
                 f'<div style="padding:8px 12px;border-bottom:1px solid #1a1f3a;font-size:13px">'
