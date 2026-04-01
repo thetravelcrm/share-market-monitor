@@ -503,15 +503,30 @@ with st.sidebar:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Auto-refresh  (native – no external package needed)
+#  Auto-refresh  —  JS-based timer so _check_schedule() fires
+#  even if nobody interacts with the page
 # ═══════════════════════════════════════════════════════════════
-if auto_refresh:
-    import time as _time
-    _last = st.session_state.get("_ar_last", 0)
-    if _time.time() - _last >= refresh_mins * 60:
-        st.session_state["_ar_last"] = _time.time()
-        do_run()
-        st.rerun()
+try:
+    from streamlit_autorefresh import st_autorefresh as _st_ar
+    _ar_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    _ar_mins = _ar_ist.hour * 60 + _ar_ist.minute
+    _ar_weekday = _ar_ist.weekday() < 5   # Mon–Fri
+    # During market/extended hours (8:20 AM – 9:30 PM IST on weekdays) refresh
+    # every 5 min so scheduled slots never miss by more than 5 min.
+    # Outside those hours refresh every 30 min (keeps token alive, cheaper).
+    if _ar_weekday and 8 * 60 + 20 <= _ar_mins <= 21 * 60 + 30:
+        _ar_interval_ms = (refresh_mins if auto_refresh else 5) * 60 * 1000
+    else:
+        _ar_interval_ms = 30 * 60 * 1000   # 30 min off-hours
+    _st_ar(interval=_ar_interval_ms, key="sched_ar")
+except ImportError:
+    # Fallback: manual refresh when user has toggle ON
+    if auto_refresh:
+        import time as _time
+        _last = st.session_state.get("_ar_last", 0)
+        if _time.time() - _last >= refresh_mins * 60:
+            st.session_state["_ar_last"] = _time.time()
+            st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════
