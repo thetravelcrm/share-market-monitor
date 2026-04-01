@@ -16,7 +16,7 @@ import streamlit as st
 from pipeline        import run_pipeline, PipelineResult
 from impact_analyzer import ImpactResult
 from signal_engine   import generate_signal
-from history_store   import load_history, append_run
+from history_store   import load_history, save_history, append_run, check_and_update_outcomes
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
@@ -533,8 +533,8 @@ def _check_schedule() -> None:
             do_run()
             new_result = st.session_state.get("result")
             if new_result:
-                sigs = [s for _, _, s in new_result.all_signals]
-                append_run(label, sigs)
+                sigs_with_impact = [(s, imp) for _, imp, s in new_result.all_signals]
+                append_run(label, sigs_with_impact)
             st.rerun()
 
 _check_schedule()
@@ -609,7 +609,7 @@ tab_nse, tab_journal, tab_backtest, tab_history = st.tabs([
     "📊 NSE Data",
     "📓 Trade Journal",
     "🔬 Backtest",
-    "📅 Signal History",
+    "📊 MPHR",
 ])
 
 
@@ -834,87 +834,115 @@ with tab_signals:
                 is_under = imp.reaction_status == "Underreacted"
                 tech     = getattr(imp.price_data, "technical", None) if imp.price_data else None
 
-                # ── RSI badge ──────────────────────────────────
+                # ── Badge section ───────────────────────────────
+                # NO TRADE cards: mute all badge colors so nothing looks actionable
+                is_no_trade = sig.action == "NO TRADE"
+                def _bc(active_color: str) -> str:
+                    """Badge color: grey if NO TRADE, else original color."""
+                    return "#555" if is_no_trade else active_color
+                def _tc(active_color: str) -> str:
+                    """Text color: grey if NO TRADE, else original color."""
+                    return "#888" if is_no_trade else active_color
+
                 rsi_html = ""
                 if tech:
-                    rsi_color = "#00ff88" if tech.rsi_14 < 35 else ("#ff4455" if tech.rsi_14 > 65 else "#a8b0d0")
-                    rsi_label = "Oversold" if tech.rsi_14 < 35 else ("Overbought" if tech.rsi_14 > 65 else "Neutral")
-                    trend_icon = {"Uptrend": "↑", "Downtrend": "↓", "Sideways": "→"}.get(tech.trend, "→")
+                    # ── RSI badge (context-aware color) ────────
+                    # Oversold in downtrend = falling knife (orange warning), not a green signal
+                    if tech.rsi_14 < 35:
+                        if sig.action == "BUY" and tech.trend in ("Uptrend", "Sideways"):
+                            _raw_rsi_col = "#00ff88"
+                            rsi_label = "Oversold"
+                        else:
+                            _raw_rsi_col = "#ffaa33"
+                            rsi_label = "Oversold \u26a0"
+                    elif tech.rsi_14 > 65:
+                        if sig.action == "SHORT" and tech.trend in ("Downtrend", "Sideways"):
+                            _raw_rsi_col = "#ff4455"
+                            rsi_label = "Overbought"
+                        else:
+                            _raw_rsi_col = "#ffaa33"
+                            rsi_label = "Overbought \u26a0"
+                    else:
+                        _raw_rsi_col = "#a8b0d0"
+                        rsi_label = "Neutral"
+                    rsi_color = _bc(_raw_rsi_col)
+                    rsi_txt   = _tc(_raw_rsi_col)
+                    trend_icon = {"Uptrend": "\u2191", "Downtrend": "\u2193", "Sideways": "\u2192"}.get(tech.trend, "\u2192")
                     rsi_html = (
                         f'<span style="background:rgba(255,255,255,0.05);border:1px solid {rsi_color};'
-                        f'color:{rsi_color};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                        f'color:{rsi_txt};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
                         f'RSI {tech.rsi_14:.0f} {rsi_label}</span> '
-                        f'<span style="background:rgba(255,255,255,0.05);border:1px solid #a8b0d0;'
-                        f'color:#a8b0d0;padding:2px 8px;border-radius:4px;font-size:11px">'
+                        f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_bc("#a8b0d0")};'
+                        f'color:{_tc("#a8b0d0")};padding:2px 8px;border-radius:4px;font-size:11px">'
                         f'{trend_icon} {tech.trend}</span> '
                     )
                     if tech.near_support:
-                        rsi_html += '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">📍 Near Support</span> '
+                        rsi_html += f'<span style="background:rgba(0,255,136,0.1);border:1px solid {_bc("#00ff88")};color:{_tc("#00ff88")};padding:2px 8px;border-radius:4px;font-size:11px">\U0001f4cd Near Support</span> '
                     if tech.near_resistance:
-                        rsi_html += '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">📍 Near Resistance</span> '
+                        rsi_html += f'<span style="background:rgba(255,68,85,0.1);border:1px solid {_bc("#ff4455")};color:{_tc("#ff4455")};padding:2px 8px;border-radius:4px;font-size:11px">\U0001f4cd Near Resistance</span> '
                     if tech.bb_squeeze:
-                        rsi_html += '<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">⚡ BB Squeeze</span> '
+                        rsi_html += f'<span style="background:rgba(255,215,0,0.1);border:1px solid {_bc("#ffd700")};color:{_tc("#ffd700")};padding:2px 8px;border-radius:4px;font-size:11px">\u26a1 BB Squeeze</span> '
 
                     # ── MACD badge ──────────────────────────────
                     if getattr(tech, "macd_line", 0.0) != 0.0:
-                        _mc = "#00ff88" if tech.macd_bullish else "#ff4455"
-                        _ma = "↑" if tech.macd_bullish else "↓"
+                        _raw_mc = "#00ff88" if tech.macd_bullish else "#ff4455"
+                        _ma = "\u2191" if tech.macd_bullish else "\u2193"
                         _ml = "Bullish" if tech.macd_bullish else "Bearish"
                         rsi_html += (
-                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_mc};'
-                            f'color:{_mc};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_bc(_raw_mc)};'
+                            f'color:{_tc(_raw_mc)};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
                             f'MACD {_ma} {_ml}</span> '
                         )
 
                     # ── Stochastic badge ────────────────────────
                     if getattr(tech, "stoch_oversold", False):
                         rsi_html += (
-                            f'<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;'
-                            f'color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(0,255,136,0.1);border:1px solid {_bc("#00ff88")};'
+                            f'color:{_tc("#00ff88")};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'Stoch {tech.stoch_k:.0f} Oversold</span> '
                         )
                     elif getattr(tech, "stoch_overbought", False):
                         rsi_html += (
-                            f'<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;'
-                            f'color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(255,68,85,0.1);border:1px solid {_bc("#ff4455")};'
+                            f'color:{_tc("#ff4455")};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'Stoch {tech.stoch_k:.0f} Overbought</span> '
                         )
 
                     # ── OBV badge ───────────────────────────────
                     _obv = getattr(tech, "obv_trend", "Neutral")
                     if _obv == "Rising":
-                        rsi_html += '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">OBV ↑ Rising</span> '
+                        rsi_html += f'<span style="background:rgba(0,255,136,0.1);border:1px solid {_bc("#00ff88")};color:{_tc("#00ff88")};padding:2px 8px;border-radius:4px;font-size:11px">OBV \u2191 Rising</span> '
                     elif _obv == "Falling":
-                        rsi_html += '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">OBV ↓ Falling</span> '
+                        rsi_html += f'<span style="background:rgba(255,68,85,0.1);border:1px solid {_bc("#ff4455")};color:{_tc("#ff4455")};padding:2px 8px;border-radius:4px;font-size:11px">OBV \u2193 Falling</span> '
 
-                    # ── ATR badge (show only if volatility > 2%) ─
+                    # ── ATR badge ───────────────────────────────
                     _atr_pct = getattr(tech, "atr_pct", 0.0)
                     if _atr_pct > 2.0:
                         rsi_html += (
-                            f'<span style="background:rgba(255,215,0,0.1);border:1px solid #ffd700;'
-                            f'color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(255,215,0,0.1);border:1px solid {_bc("#ffd700")};'
+                            f'color:{_tc("#ffd700")};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'ATR {_atr_pct:.1f}% Vol</span> '
                         )
 
                     # ── ADX badge ───────────────────────────────
                     _adx_v = getattr(tech, "adx_14", 0.0)
                     if _adx_v > 0:
-                        _adx_col = "#00ff88" if getattr(tech, "adx_trending", False) else "#a8b0d0"
+                        _raw_adx_col = "#00ff88" if getattr(tech, "adx_trending", False) else "#a8b0d0"
                         _adx_lbl = "Trending" if getattr(tech, "adx_trending", False) else "Weak"
                         rsi_html += (
-                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_adx_col};'
-                            f'color:{_adx_col};padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_bc(_raw_adx_col)};'
+                            f'color:{_tc(_raw_adx_col)};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'ADX {_adx_v:.0f} {_adx_lbl}</span> '
                         )
 
                     # ── SuperTrend badge ─────────────────────────
                     _st = getattr(tech, "supertrend_bullish", None)
                     if _st is not None:
-                        _st_col = "#00ff88" if _st else "#ff4455"
+                        _raw_st_col = "#00ff88" if _st else "#ff4455"
                         _st_lbl = "↑ Bull" if _st else "↓ Bear"
                         rsi_html += (
-                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_st_col};'
-                            f'color:{_st_col};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_bc(_raw_st_col)};'
+                            f'color:{_tc(_raw_st_col)};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
                             f'SuperTrend {_st_lbl}</span> '
                         )
 
@@ -922,14 +950,14 @@ with tab_signals:
                     _cci_v = getattr(tech, "cci_20", 0.0)
                     if getattr(tech, "cci_oversold", False):
                         rsi_html += (
-                            f'<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;'
-                            f'color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(0,255,136,0.1);border:1px solid {_bc("#00ff88")};'
+                            f'color:{_tc("#00ff88")};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'CCI {_cci_v:.0f} Oversold</span> '
                         )
                     elif getattr(tech, "cci_overbought", False):
                         rsi_html += (
-                            f'<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;'
-                            f'color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(255,68,85,0.1);border:1px solid {_bc("#ff4455")};'
+                            f'color:{_tc("#ff4455")};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'CCI {_cci_v:.0f} Overbought</span>'
                         )
 
@@ -937,11 +965,11 @@ with tab_signals:
                     _vwap = getattr(tech, "vwap_5d", 0.0)
                     if _vwap > 0:
                         _vw_above = getattr(tech, "price_above_vwap", False)
-                        _vw_col = "#00ff88" if _vw_above else "#ff4455"
+                        _raw_vw_col = "#00ff88" if _vw_above else "#ff4455"
                         _vw_lbl = "Above" if _vw_above else "Below"
                         rsi_html += (
-                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_vw_col};'
-                            f'color:{_vw_col};padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_bc(_raw_vw_col)};'
+                            f'color:{_tc(_raw_vw_col)};padding:2px 8px;border-radius:4px;font-size:11px">'
                             f'VWAP {_vw_lbl}</span> '
                         )
 
@@ -949,24 +977,24 @@ with tab_signals:
                     _regime = getattr(tech, "market_regime", "Unknown")
                     if _regime != "Unknown":
                         _reg_colors = {"Trending": "#00ff88", "Sideways": "#ffaa33", "HighVol": "#ff4455", "LowLiquidity": "#888"}
-                        _reg_col = _reg_colors.get(_regime, "#a8b0d0")
+                        _raw_reg_col = _reg_colors.get(_regime, "#a8b0d0")
                         rsi_html += (
-                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_reg_col};'
-                            f'color:{_reg_col};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_bc(_raw_reg_col)};'
+                            f'color:{_tc(_raw_reg_col)};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
                             f'{_regime}</span> '
                         )
 
                     # ── Volume analysis badges ──────────────────────
                     if getattr(tech, "volume_spike", False):
                         rsi_html += (
-                            '<span style="background:rgba(0,255,136,0.15);border:1px solid #00ff88;'
-                            'color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'<span style="background:rgba(0,255,136,0.15);border:1px solid {_bc("#00ff88")};'
+                            f'color:{_tc("#00ff88")};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
                             'VOL SPIKE</span> '
                         )
                     if getattr(tech, "pre_breakout", False):
                         rsi_html += (
-                            '<span style="background:rgba(255,215,0,0.15);border:1px solid #ffd700;'
-                            'color:#ffd700;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
+                            f'<span style="background:rgba(255,215,0,0.15);border:1px solid {_bc("#ffd700")};'
+                            f'color:{_tc("#ffd700")};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">'
                             'PRE-BREAKOUT</span> '
                         )
 
@@ -1466,93 +1494,150 @@ with tab_backtest:
 
 
 # ───────────────────────────────────────────────────────────────
-#  TAB 9  —  Signal History (Prediction vs Actual)
+#  TAB 9  —  MPHR (Market Prediction History & Results)
 # ───────────────────────────────────────────────────────────────
 with tab_history:
-    from backtester import backtest_signal as _bt_signal
-
     history = load_history()
+
+    # Auto-check outcomes for signals > 5 days old
+    history, _outcomes_changed = check_and_update_outcomes(history)
+    if _outcomes_changed:
+        save_history(history)
+
+    # Flatten all HIGH/EXTREME BUY/SHORT signals into a single chronological list
+    _all_preds: list[dict] = []
+    for _entry in history:
+        _rt = _entry.get("run_time", "")
+        for _s in _entry.get("signals", []):
+            if _s.get("action") not in ("BUY", "SHORT"):
+                continue
+            if _s.get("impact_strength") not in ("HIGH", "EXTREME"):
+                continue
+            _all_preds.append({**_s, "_run_time": _rt, "_slot": _entry.get("slot_label", "")})
+
+    _all_preds.sort(key=lambda x: x["_run_time"], reverse=True)
+
+    # ── Stats header ─────────────────────────────────────────
+    _verified = [p for p in _all_preds if p.get("outcome")]
+    _wins     = [p for p in _verified if p.get("outcome") == "WIN"]
+    _win_rate = round(len(_wins) / len(_verified) * 100, 1) if _verified else 0.0
+    _avg_ret  = round(
+        sum(p.get("outcome_return_pct") or 0 for p in _verified) / len(_verified), 2
+    ) if _verified else 0.0
+
+    _30d_start = (datetime.now(timezone.utc) - timedelta(days=30))
+    _30d_end   = datetime.now(timezone.utc)
+    _win_col   = "#00ff88" if _win_rate >= 55 else ("#ffaa33" if _win_rate >= 40 else "#ff4455")
+    _ret_col   = "#00ff88" if _avg_ret >= 0 else "#ff4455"
+
     st.markdown(
-        '<div class="card"><div class="card-title">📅 Signal History — Prediction vs Actual</div>',
+        f'<div class="card">'
+        f'<div class="card-title">📊 MPHR — Market Prediction History &amp; Results</div>'
+        f'<div style="color:#6b7280;font-size:12px;margin-bottom:12px">'
+        f'30-day window: {_30d_start.strftime("%d %b")} – {_30d_end.strftime("%d %b %Y")} IST'
+        f' &nbsp;·&nbsp; Only <b>HIGH</b> &amp; <b>EXTREME</b> impact BUY/SHORT signals tracked'
+        f'</div>'
+        f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px">'
+        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Total</div>'
+        f'    <div style="font-size:22px;font-weight:700">{len(_all_preds)}</div></div>'
+        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Verified</div>'
+        f'    <div style="font-size:22px;font-weight:700">{len(_verified)}</div></div>'
+        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Wins</div>'
+        f'    <div style="font-size:22px;font-weight:700;color:#00ff88">{len(_wins)}</div></div>'
+        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Win Rate</div>'
+        f'    <div style="font-size:22px;font-weight:700;color:{_win_col}">{_win_rate:.1f}%</div></div>'
+        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Avg Return</div>'
+        f'    <div style="font-size:22px;font-weight:700;color:{_ret_col}">{_avg_ret:+.2f}%</div></div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
-    if not history:
+    if not _all_preds:
         st.info(
-            "No history yet. Signals are archived automatically at the three scheduled "
-            "slots: **09:15 IST**, **13:00 IST**, and **15:20 IST**. "
-            "The next time the app is open at or after one of those times the pipeline "
-            "will run automatically and the signals will be saved here."
+            "No HIGH/EXTREME impact predictions yet. Signals are archived at the scheduled "
+            "slots: **09:15**, **13:00**, **15:20**, **17:30**, and **21:00 IST**. "
+            "Only BUY/SHORT signals with HIGH or EXTREME impact appear here."
         )
     else:
-        for entry in reversed(history):
-            run_utc  = datetime.fromisoformat(entry["run_time"])
-            run_ist  = run_utc + timedelta(hours=5, minutes=30)
-            slot_lbl = entry.get("slot_label", "—")
-            sigs     = entry.get("signals", [])
-            run_id   = entry["run_id"]
-            exp_lbl  = f"{run_ist.strftime('%d %b %Y  %H:%M IST')}  ·  {slot_lbl}  ·  {len(sigs)} signal(s)"
+        # ── Filters ──────────────────────────────────────────
+        _fc1, _fc2 = st.columns([2, 2])
+        with _fc1:
+            _imp_filter = st.multiselect(
+                "Impact", ["EXTREME", "HIGH"], default=["EXTREME", "HIGH"], key="mphr_imp"
+            )
+        with _fc2:
+            _act_filter = st.multiselect(
+                "Action", ["BUY", "SHORT"], default=["BUY", "SHORT"], key="mphr_act"
+            )
 
-            with st.expander(exp_lbl, expanded=False):
-                if not sigs:
-                    st.caption("No signals were generated at this slot.")
-                    continue
+        _filtered = [
+            p for p in _all_preds
+            if p.get("impact_strength") in _imp_filter
+            and p.get("action") in _act_filter
+        ]
 
-                # Prediction table
-                pred_rows = [{
-                    "Symbol":     s["symbol"],
-                    "Action":     s["action"],
-                    "Entry Low":  s["entry_low"],
-                    "Entry High": s["entry_high"],
-                    "Stop":       s["stop_loss"],
-                    "T1":         s["target1"],
-                    "T2":         s["target2"],
-                    "R:R":        s["risk_reward"],
-                    "Conf":       f"{s['confidence']}%",
-                    "Edge":       s["edge_type"],
-                } for s in sigs]
-                st.dataframe(pd.DataFrame(pred_rows), use_container_width=True, hide_index=True)
+        # ── Prediction rows ───────────────────────────────────
+        _outcome_badge = {
+            "WIN":        '<span style="background:#0a2a14;border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">WIN</span>',
+            "LOSS":       '<span style="background:#2a0a0a;border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">LOSS</span>',
+            "BREAK-EVEN": '<span style="background:#1a1200;border:1px solid #ffaa33;color:#ffaa33;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">BREAK-EVEN</span>',
+        }
+        _pending_badge = '<span style="background:rgba(255,255,255,0.05);border:1px solid #555;color:#888;padding:2px 8px;border-radius:4px;font-size:11px">PENDING</span>'
 
-                # Verify Outcomes button
-                if st.button("Verify Outcomes", key=f"verify_{run_id}"):
-                    outcomes = []
-                    prog = st.progress(0, text="Backtesting signals…")
-                    for i, s in enumerate(sigs):
-                        prog.progress((i + 1) / len(sigs), text=f"Checking {s['symbol']}…")
-                        res = _bt_signal(
-                            symbol      = s["symbol"],
-                            action      = s["action"],
-                            entry       = s["entry_low"],
-                            target      = s["target2"],
-                            stop        = s["stop_loss"],
-                            signal_date = run_utc,
-                            horizon_days= 5,
-                        )
-                        outcomes.append({**s, **res})
-                    prog.empty()
-                    st.session_state[f"res_{run_id}"] = outcomes
+        for _p in _filtered:
+            _rt_str  = _p.get("_run_time", "")
+            _rt_utc  = datetime.fromisoformat(_rt_str) if _rt_str else datetime.now(timezone.utc)
+            if _rt_utc.tzinfo is None:
+                _rt_utc = _rt_utc.replace(tzinfo=timezone.utc)
+            _rt_ist  = _rt_utc + timedelta(hours=5, minutes=30)
+            _ts      = _rt_ist.strftime("%d %b %H:%M IST")
 
-                # Show cached outcomes
-                cached = st.session_state.get(f"res_{run_id}")
-                if cached:
-                    def _oc(val: str):
-                        if val == "WIN":        return "background-color:#0a1f0f;color:#00ff88"
-                        if val == "LOSS":       return "background-color:#1f0a0a;color:#ff4455"
-                        if val == "BREAK-EVEN": return "background-color:#1a140a;color:#ffaa33"
-                        return ""
-                    res_rows = [{
-                        "Symbol":   o["symbol"],
-                        "Action":   o["action"],
-                        "Outcome":  o.get("outcome", "—"),
-                        "Return %": f"{o.get('actual_return_pct', 0):+.2f}%",
-                        "Hit T2":   "Yes" if o.get("hit_target") else "No",
-                        "Hit SL":   "Yes" if o.get("hit_stop")   else "No",
-                    } for o in cached]
-                    res_df = pd.DataFrame(res_rows)
-                    st.dataframe(
-                        res_df.style.map(_oc, subset=["Outcome"]),
-                        use_container_width=True, hide_index=True,
-                    )
+            _act  = _p.get("action", "")
+            _act_col = "#00ff88" if _act == "BUY" else "#ff4455"
+            _act_badge = (
+                f'<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;'
+                f'padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">{_act}</span>'
+                if _act == "BUY" else
+                f'<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;'
+                f'padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">{_act}</span>'
+            )
+
+            _imp  = _p.get("impact_strength", "")
+            _imp_colors = {"EXTREME": "#ff4455", "HIGH": "#ffaa33", "MEDIUM": "#00d4ff", "LOW": "#6b7280"}
+            _imp_col = _imp_colors.get(_imp, "#6b7280")
+            _imp_badge = (
+                f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_imp_col};'
+                f'color:{_imp_col};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">{_imp}</span>'
+            )
+
+            _oc = _p.get("outcome")
+            _ret_pct = _p.get("outcome_return_pct")
+            _oc_badge = _outcome_badge.get(_oc, _pending_badge)
+            _ret_str  = f' <span style="color:{"#00ff88" if (_ret_pct or 0) >= 0 else "#ff4455"};font-size:11px">{_ret_pct:+.2f}%</span>' if _ret_pct is not None else ""
+
+            _pred_px = _p.get("prediction_price", 0)
+            _pred_str = f"₹{_pred_px:,.2f}" if _pred_px > 0 else "—"
+            _sector   = _p.get("sector", "")
+            _name     = _p.get("name", _p.get("symbol", ""))
+
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
+                f'padding:8px 12px;border-bottom:1px solid #1a1f3a;font-size:13px">'
+                f'  <span style="color:#6b7280;font-size:11px;min-width:115px">{_ts}</span>'
+                f'  <span style="font-weight:700;min-width:80px">{_p.get("symbol","")}</span>'
+                f'  <span style="color:#a8b0d0;font-size:11px">{_name[:22]}</span>'
+                f'  {_act_badge} {_imp_badge}'
+                f'  <span style="color:#6b7280;font-size:11px">{_sector}</span>'
+                f'  <span style="color:#a8b0d0">@ {_pred_str}</span>'
+                f'  {_oc_badge}{_ret_str}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown('</div>', unsafe_allow_html=True)
 

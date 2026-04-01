@@ -237,11 +237,16 @@ def _confidence_score(
     # ── Technical Analysis bonuses / penalties ────────────────
     tech = result.price_data.technical if result.price_data else None
     if tech:
-        # RSI extremes (+15 pts)
+        # RSI extremes — scaled by trend context to avoid "falling knife" false bonus
+        # Oversold in uptrend = genuine reversal (+15). Oversold in downtrend = falling knife (0).
         if direction == "BUY" and tech.rsi_14 < 35:
-            score += 15
+            if tech.trend == "Uptrend":    score += 15  # strong reversal setup
+            elif tech.trend == "Sideways": score += 8   # moderate bounce potential
+            # Downtrend: 0 pts — falling knife, not a bounce
         elif direction == "SHORT" and tech.rsi_14 > 65:
-            score += 15
+            if tech.trend == "Downtrend":  score += 15  # strong continuation setup
+            elif tech.trend == "Sideways": score += 8   # moderate
+            # Uptrend: 0 pts — momentum stock, risky short
 
         # Near support/resistance (+10 pts)
         if direction == "BUY" and tech.near_support:
