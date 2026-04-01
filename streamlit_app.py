@@ -1223,7 +1223,9 @@ with tab_mcx:
             for _mi_item, _mi_sent, _mi in _mcx_impacts[:8]:
                 _lot_s  = getattr(_mi.price_data, "lot_size", 1) if _mi.price_data else 1
                 _lot_u  = getattr(_mi.price_data, "lot_unit", "")  if _mi.price_data else ""
-                _price  = _mi.price_data.current_price if _mi.price_data else 0.0
+                _price  = (_mi.price_data.current_price
+                           if _mi.price_data and _mi.price_data.current_price > 0
+                           else _mcx_live_price(_mi.symbol))
                 _cv     = round(_price * _lot_s, 0) if _lot_s > 1 and _price > 0 else 0
                 _imp_c  = {"EXTREME":"badge-extreme","HIGH":"badge-high",
                            "MEDIUM":"badge-medium","LOW":"badge-low"}.get(_mi.impact_strength,"badge-teal")
@@ -1687,6 +1689,18 @@ def _mphr_live_price(symbol: str) -> float:
         return 0.0
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _mcx_live_price(symbol: str) -> float:
+    """Fetch latest MCX futures price via yfinance (cached 5 min)."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(f"{symbol}.MCX")
+        p = t.fast_info.last_price
+        return float(p) if p and p > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 with tab_history:
     history = load_history()
 
@@ -1831,7 +1845,16 @@ with tab_history:
                 _entry_str = "—"
 
             _stop_str = f"₹{_stop_px:,.2f}" if _stop_px > 0 else "—"
-            _tgt_str  = f"₹{_tgt1:,.2f} / ₹{_tgt2:,.2f}" if _tgt1 > 0 else "—"
+            # For BUY/SHORT: show target levels; for NO TRADE: show expected-move reference
+            if _tgt1 > 0:
+                _tgt_str = f"₹{_tgt1:,.2f} / ₹{_tgt2:,.2f}"
+            elif _pred_px > 0 and _p.get("expected_move_pct"):
+                _exp     = float(_p.get("expected_move_pct", 0.0))
+                _ref_px  = _pred_px * (1 + _exp / 100)
+                _tgt_str = f"~₹{_ref_px:,.2f} ({_exp:+.1f}% exp)"
+            else:
+                _tgt_str = "—"
+            _entry_label = "Price at Signal" if _act == "NO TRADE" else "Entry"
 
             # Current live price — always fetch for all symbols
             _cur_px  = _mphr_live_price(_sym)
@@ -1859,9 +1882,9 @@ with tab_history:
                 f'</div>'
                 # Row 2: price details
                 f'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;font-size:11px;color:#6b7280">'
-                f'  <span>Entry <b style="color:#ffd700">{_entry_str}</b></span>'
+                f'  <span>{_entry_label} <b style="color:#ffd700">{_entry_str}</b></span>'
                 f'  <span>Stop <b style="color:#ff4455">{_stop_str}</b></span>'
-                f'  <span>Exit Target <b style="color:#00ff88">{_tgt_str}</b></span>'
+                f'  <span>Suggested Exit <b style="color:#00ff88">{_tgt_str}</b></span>'
                 f'  <span>Current <b style="color:#00d4ff">{_cur_str}</b></span>'
                 + (f'  <span>Open P&amp;L {_pnl_str}</span>' if _pnl_str else "")
                 + f'</div>'

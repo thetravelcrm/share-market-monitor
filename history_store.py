@@ -20,6 +20,11 @@ def signal_to_dict(sig, imp=None) -> dict:
         prediction_price = round((sig.entry_low + sig.entry_high) / 2, 2)
     elif sig.entry_low > 0:
         prediction_price = sig.entry_low
+    # NO TRADE signals have entry=0; save live market price at signal time instead
+    if prediction_price == 0.0 and imp is not None:
+        _pd = getattr(imp, "price_data", None)
+        if _pd is not None:
+            prediction_price = round(getattr(_pd, "current_price", 0.0), 2)
 
     d = {
         "symbol":       sig.symbol,
