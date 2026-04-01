@@ -441,6 +441,11 @@ if auto_refresh:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  App version (must be defined before header and pipeline runner)
+# ═══════════════════════════════════════════════════════════════
+_APP_VERSION = "v7"
+
+# ═══════════════════════════════════════════════════════════════
 #  Header
 # ═══════════════════════════════════════════════════════════════
 mkt_status, mkt_color = market_status()
@@ -489,9 +494,7 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 #  Pipeline runner
 # ═══════════════════════════════════════════════════════════════
-# Version key — bump this string whenever PriceData/TradeSignal schema changes
-# so stale cached objects are discarded automatically on next load
-_APP_VERSION = "v7"
+# _APP_VERSION defined above (before header). Cache bust on version change.
 if st.session_state.get("_app_version") != _APP_VERSION:
     for _k in ["result", "last_run", "bt_result"]:
         st.session_state.pop(_k, None)
