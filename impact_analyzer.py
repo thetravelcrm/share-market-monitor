@@ -55,7 +55,7 @@ _MCX_PROXY: dict[str, str] = {
 }
 
 _MCX_LOT_SIZES: dict[str, tuple[int, str]] = {
-    "SILVERMIC":  (30,   "kg"),
+    "SILVERMIC":  (1,    "kg"),   # Silver Micro: Trading Unit = 1 kg (MCX spec)
     "GOLDM":      (10,   "g"),
     "CRUDEOIL":   (100,  "bbl"),
     "NATURALGAS": (1250, "mmbtu"),

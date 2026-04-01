@@ -456,7 +456,7 @@ STOCK_UNIVERSE = {
     "SETFNIF50":  {"name":"SBI Nifty 50 ETF",      "sector":"ETF/Index","keywords":["sbi nifty etf","setfnif50"]},
 
     # ── MCX COMMODITIES / FUTURES (tracked via commodity indices) ──
-    "SILVERMIC":  {"name":"Silver Mini (MCX)",     "sector":"MCX/Silver","keywords":["silver mcx","silvermic","mcx silver","silver mini","silver futures","comex silver"]},
+    "SILVERMIC":  {"name":"Silver Micro (MCX)",    "sector":"MCX/Silver","keywords":["silver mcx","silvermic","mcx silver","silver micro","silver mini","silver futures","comex silver"]},
     "GOLDM":      {"name":"Gold Mini (MCX)",       "sector":"MCX/Gold","keywords":["gold mcx","goldm","mcx gold","gold mini","gold futures","comex gold"]},
     "CRUDEOIL":   {"name":"Crude Oil (MCX)",       "sector":"MCX/Energy","keywords":["crude oil mcx","crude futures","brent crude","wti crude","crude oil price"]},
     "NATURALGAS": {"name":"Natural Gas (MCX)",     "sector":"MCX/Energy","keywords":["natural gas mcx","natgas","natural gas price","ng futures"]},
