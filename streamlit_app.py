@@ -356,7 +356,8 @@ with st.sidebar:
 
     # ── Fyers Live Data connection ─────────────────────────────
     try:
-        from fyers_fetcher import is_configured, get_auth_url, exchange_auth_code
+        from fyers_fetcher import is_configured, get_auth_url, exchange_auth_code, \
+                                  auto_login, is_auto_login_configured
         import os as _os, json as _json
 
         def _fyers_save(token: str) -> None:
@@ -410,9 +411,20 @@ with st.sidebar:
                     "<div style='color:#a8b0d0;font-size:12px;font-weight:600'>📡 Fyers Real-Time Prices</div>",
                     unsafe_allow_html=True,
                 )
+                if is_auto_login_configured():
+                    if st.button("🤖 Auto-Connect Fyers", use_container_width=True):
+                        with st.spinner("Logging in via TOTP…"):
+                            token = auto_login()
+                        if token:
+                            st.session_state["fyers_token"] = token
+                            _fyers_save(token)
+                            st.rerun()
+                        else:
+                            st.error("Auto-login failed. Try manual connect.")
                 auth_url = get_auth_url()
-                st.link_button("🔗 Connect Fyers", auth_url, use_container_width=True)
-                st.caption("Log in once — token lasts till midnight")
+                st.link_button("🔗 Manual Connect", auth_url, use_container_width=True)
+                _caption = "Auto-Connect uses TOTP — no browser needed" if is_auto_login_configured() else "Log in once — token lasts till midnight"
+                st.caption(_caption)
     except Exception:
         pass
 
