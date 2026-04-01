@@ -235,14 +235,45 @@ def auto_login() -> tuple[Optional[str], str]:
         return None, f"Step5 exchange error: {e}"
 
 
+# MCX commodity symbols that should use MCX exchange prefix in Fyers
+_MCX_SYMBOLS = {"SILVERMIC", "GOLDM", "CRUDEOIL", "NATURALGAS",
+                "COPPER", "ZINC", "ALUMINIUM", "NICKEL", "LEAD"}
+
+
+def _mcx_fyers_symbol(symbol: str) -> str:
+    """
+    Build the active near-month Fyers MCX symbol.
+    Fyers format: MCX:SILVERMIC26APR  (symbol + 2-digit-year + 3-letter-month)
+    Uses the current month; if today is past the 25th, rolls to next month
+    (MCX contracts typically expire on the last day of the month).
+    """
+    from datetime import datetime, timezone, timedelta
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    # Roll to next month if within last 5 days of month (contract near expiry)
+    if ist.day >= 26:
+        if ist.month == 12:
+            exp = ist.replace(year=ist.year + 1, month=1, day=1)
+        else:
+            exp = ist.replace(month=ist.month + 1, day=1)
+    else:
+        exp = ist
+    yy  = exp.strftime("%y")       # "26"
+    mmm = exp.strftime("%b").upper()  # "APR"
+    return f"MCX:{symbol}{yy}{mmm}"
+
+
 def get_quote(symbol: str, access_token: str) -> Optional[dict]:
     """
-    Fetch live NSE quote via Fyers API.
+    Fetch live quote via Fyers API — NSE equities or MCX futures.
     Returns dict with: last_price, volume, change_pct, prev_close, high, low, open
     """
     try:
         fyers = get_fyers_model(access_token)
-        resp = fyers.quotes({"symbols": f"NSE:{symbol}-EQ"})
+        if symbol in _MCX_SYMBOLS:
+            fyers_sym = _mcx_fyers_symbol(symbol)
+        else:
+            fyers_sym = f"NSE:{symbol}-EQ"
+        resp = fyers.quotes({"symbols": fyers_sym})
         if resp.get("code") != 200:
             return None
         d = resp.get("d", [{}])[0].get("v", {})

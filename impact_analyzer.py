@@ -140,8 +140,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
     """Fetch live/latest price data. Uses Fyers API if connected, else yfinance."""
     _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
 
-    # ── Try Fyers for NSE stocks ───────────────────────────────
-    if symbol not in _MCX_SYMBOLS:
+    # ── Try Fyers for NSE stocks AND MCX futures ──────────────
+    if True:
         try:
             import streamlit as _st
             _token = _st.session_state.get("fyers_token", "")
@@ -151,15 +151,27 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
                 avg_vol = fq["volume"]
                 h52w = fq["high"]; l52w = fq["low"]
                 tech = None
+                is_mcx_sym = symbol in _MCX_SYMBOLS
                 try:
-                    _h = yf.Ticker(f"{symbol}.NS").history(period="60d", interval="1d", auto_adjust=True)
+                    # For MCX: use COMEX yfinance proxy for technicals + 52w range
+                    # For NSE: use .NS ticker
+                    _proxy = _MCX_PROXY.get(symbol, f"{symbol}.NS")
+                    _h = yf.Ticker(_proxy).history(period="60d", interval="1d", auto_adjust=True)
                     if len(_h) >= 20:
                         avg_vol = int(_h["Volume"].iloc[-20:].mean())
-                        h52w = float(_h["High"].max())
-                        l52w = float(_h["Low"].min())
+                        if is_mcx_sym and symbol in _MCX_CONV:
+                            usd_inr = _fetch_usd_inr()
+                            _prem   = _MCX_LOCAL_PREMIUM.get(symbol, 1.0)
+                            _c      = _MCX_CONV[symbol]
+                            h52w = round(float(_h["High"].max()) * _c * usd_inr * _prem, 2)
+                            l52w = round(float(_h["Low"].min())  * _c * usd_inr * _prem, 2)
+                        else:
+                            h52w = float(_h["High"].max())
+                            l52w = float(_h["Low"].min())
                         tech = compute_technicals(_h, fq["last_price"])
                 except Exception as exc:
                     logger.debug("Fyers yfinance supplement failed for %s: %s", symbol, exc)
+                lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, "")) if is_mcx_sym else (1, "")
                 vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
                 if not _validate_price_data(fq["last_price"], fq["prev_close"], fq["volume"], symbol):
                     return None
@@ -176,6 +188,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
                     market_cap_cr=0,
                     currency="INR",
                     technical=tech,
+                    lot_size=lot_s,
+                    lot_unit=lot_u,
                 )
         except Exception as exc:
             logger.debug("Fyers quote failed for %s: %s — falling back to yfinance", symbol, exc)
