@@ -184,32 +184,44 @@ def auto_login() -> tuple[Optional[str], str]:
         return None, f"Step3 PIN error: {e}"
 
     # Step 4 — get auth_code via Fyers token API
+    # Try three Authorization header variants that different Fyers SDK versions expect
     try:
         app_id_short = cid.split("-")[0]   # "IFT522ZFF6" from "IFT522ZFF6-100"
-        r4 = sess.post(
-            "https://api-t1.fyers.in/api/v3/token",
-            headers={"Authorization": f"{cid}:{vagator_token}"},
-            json={
-                "fyers_id":      fyers_id,
-                "app_id":        app_id_short,
-                "redirect_uri":  REDIRECT_URI,
-                "appType":       "100",
-                "code_challenge":"",
-                "state":         "None",
-                "nonce":         "",
-                "response_type": "code",
-                "create_cookie": True,
-            },
-            timeout=10,
-        )
-        d4 = r4.json()
-        redirect_url = d4.get("Url", "")
-        if not redirect_url:
-            return None, f"Step4 token API failed: {d4}"
-        parsed    = urllib.parse.urlparse(redirect_url)
-        auth_code = urllib.parse.parse_qs(parsed.query).get("auth_code", [None])[0]
-        if not auth_code:
-            return None, f"Step4 no auth_code in redirect: {redirect_url}"
+        payload4 = {
+            "fyers_id":       fyers_id,
+            "app_id":         app_id_short,
+            "redirect_uri":   REDIRECT_URI,
+            "appType":        "100",
+            "code_challenge": "",
+            "state":          "None",
+            "nonce":          "",
+            "response_type":  "code",
+            "create_cookie":  True,
+        }
+        _auth_code = None
+        _last_d4   = {}
+        for _auth_header in [
+            f"{cid}:{vagator_token}",          # variant A: full client_id:token
+            f"{app_id_short}:{vagator_token}", # variant B: short app_id:token
+            vagator_token,                     # variant C: bare token
+        ]:
+            r4 = sess.post(
+                "https://api-t1.fyers.in/api/v3/token",
+                headers={"Authorization": _auth_header,
+                         "Content-Type": "application/json"},
+                json=payload4,
+                timeout=10,
+            )
+            _last_d4 = r4.json()
+            _redirect_url = _last_d4.get("Url", "")
+            if _redirect_url:
+                _parsed   = urllib.parse.urlparse(_redirect_url)
+                _auth_code = urllib.parse.parse_qs(_parsed.query).get("auth_code", [None])[0]
+                if _auth_code:
+                    break
+        if not _auth_code:
+            return None, f"Step4 token API failed (all variants tried): {_last_d4}"
+        auth_code = _auth_code
     except Exception as e:
         return None, f"Step4 token API error: {e}"
 
