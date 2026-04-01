@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────
 #  history_store.py  –  Archive scheduled pipeline runs (signal predictions)
-#  Storage: session_state (primary) + signal_history.json (backup)
+#  Storage: st.cache_resource (primary) + signal_history.json (backup)
 #  Auto-prunes entries older than 30 days.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -10,7 +10,6 @@ import os
 from datetime import datetime, timezone, timedelta
 
 HISTORY_FILE = "signal_history.json"
-SESSION_KEY  = "signal_history"
 MAX_DAYS     = 30
 
 
@@ -37,13 +36,11 @@ def signal_to_dict(sig, imp=None) -> dict:
         "edge_type":    sig.edge_type,
         "rationale":    sig.rationale,
         "prediction_price": prediction_price,
-        # Impact fields — populated from ImpactResult if provided
         "impact_strength":   "",
         "sector":            "",
         "relation":          "",
         "expected_move_pct": 0.0,
         "news_type":         "Ongoing",
-        # Outcome fields — auto-filled later by check_and_update_outcomes()
         "outcome":            None,
         "outcome_return_pct": None,
         "hit_target":         None,
@@ -65,42 +62,64 @@ def _prune(entries: list[dict]) -> list[dict]:
     return [e for e in entries if e.get("run_time", "") >= cutoff]
 
 
+def _get_history_store():
+    """
+    Persistent in-memory store via st.cache_resource.
+    Survives Streamlit reruns within the same server process.
+    Falls back gracefully when called outside Streamlit (e.g., tests).
+    """
+    try:
+        import streamlit as st
+
+        @st.cache_resource
+        def _store():
+            return {"entries": [], "loaded_from_file": False}
+
+        return _store()
+    except Exception:
+        # Outside Streamlit — return a plain dict (no persistence)
+        return {"entries": [], "loaded_from_file": False}
+
+
 def load_history() -> list[dict]:
     """
-    Load history from session_state; fall back to JSON file on first call.
+    Load history. Priority: cache_resource (in-process) → JSON file.
     Always returns a list (may be empty).
     """
-    import streamlit as st
-    if SESSION_KEY in st.session_state:
-        return st.session_state[SESSION_KEY]
-    # First call in this session — try loading from file
-    entries: list[dict] = []
-    try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r", encoding="utf-8") as fh:
-                entries = _prune(json.load(fh))
-    except Exception:
-        entries = []
-    st.session_state[SESSION_KEY] = entries
-    return entries
+    store = _get_history_store()
+
+    # If cache_resource already has data, use it (survives reruns)
+    if store["entries"]:
+        return store["entries"]
+
+    # First time this process has loaded: try the JSON file
+    if not store["loaded_from_file"]:
+        store["loaded_from_file"] = True
+        try:
+            if os.path.exists(HISTORY_FILE):
+                with open(HISTORY_FILE, "r", encoding="utf-8") as fh:
+                    store["entries"] = _prune(json.load(fh))
+        except Exception:
+            store["entries"] = []
+
+    return store["entries"]
 
 
 def save_history(entries: list[dict]) -> None:
-    """Persist to session_state and write JSON file backup."""
-    import streamlit as st
-    entries = _prune(entries)
-    st.session_state[SESSION_KEY] = entries
+    """Persist to cache_resource (in-process) and write JSON file backup."""
+    store = _get_history_store()
+    store["entries"] = _prune(entries)
     try:
         with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
-            json.dump(entries, fh, indent=2, ensure_ascii=False)
+            json.dump(store["entries"], fh, indent=2, ensure_ascii=False)
     except Exception:
-        pass  # Streamlit Cloud filesystem may be read-only — silent fail
+        pass  # Streamlit Cloud filesystem may be read-only — cache_resource still works
 
 
 def append_run(slot_label: str, signals: list) -> str:
     """
     Archive a new scheduled run. Returns the run_id.
-    slot_label: e.g. "09:15 IST" | "13:00 IST" | "15:20 IST" | "Manual"
+    slot_label: e.g. "09:15 IST" | "13:00 IST" | "Manual"
     signals: list of TradeSignal objects OR list of (TradeSignal, ImpactResult) tuples
     """
     ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
@@ -146,15 +165,15 @@ def check_and_update_outcomes(entries: list[dict]) -> tuple[list[dict], bool]:
         if run_time.tzinfo is None:
             run_time = run_time.replace(tzinfo=timezone.utc)
         if run_time > cutoff:
-            continue  # too recent — wait 5 days
+            continue
 
         for sig in entry.get("signals", []):
             if sig.get("outcome"):
-                continue  # already verified
+                continue
             if sig.get("action") not in ("BUY", "SHORT"):
-                continue  # no targets to verify
+                continue
             if sig.get("impact_strength") not in ("HIGH", "EXTREME"):
-                continue  # only track top-impact predictions
+                continue
 
             pred_entry = sig.get("prediction_price") or sig.get("entry_low", 0)
             if not pred_entry or pred_entry <= 0:

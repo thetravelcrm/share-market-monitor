@@ -316,6 +316,26 @@ def cur_sym(price_data) -> str:
     if price_data is None: return "₹"
     return "$" if price_data.currency == "USD" else "₹"
 
+_MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
+
+def _is_mcx(imp) -> bool:
+    """True if this impact result is an MCX commodity (not NSE equity)."""
+    return imp.symbol in _MCX_SYMBOLS or imp.sector.startswith("MCX/")
+
+
+def _calc_lookback_hours() -> int:
+    """Hours from last NSE market close (15:30 IST Mon–Fri) to now."""
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    candidate = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    # If today's close hasn't happened yet or it's weekend, go to previous weekday close
+    if candidate >= now_ist or now_ist.weekday() >= 5:
+        candidate -= timedelta(days=1)
+        while candidate.weekday() >= 5:   # skip Saturday(5) and Sunday(6)
+            candidate -= timedelta(days=1)
+    delta_hours = int((now_ist - candidate).total_seconds() / 3600) + 1
+    return max(6, min(delta_hours, 120))  # clamp 6 h … 120 h
+
+
 def why_underreacted(imp: ImpactResult) -> str:
     reasons = []
     if imp.volume_ratio < 1.2:
@@ -327,30 +347,61 @@ def why_underreacted(imp: ImpactResult) -> str:
     return " · ".join(reasons) if reasons else "market still pricing in the event"
 
 
+# Default schedule slots (used when user hasn't customised)
+_DEFAULT_SLOTS = [
+    ("08:25 IST", 8 * 60 + 25),     # Pre-market auto-start
+    ("09:15 IST", 9 * 60 + 15),     # NSE open
+    ("13:00 IST", 13 * 60 + 0),     # NSE midday
+    ("15:20 IST", 15 * 60 + 20),    # NSE close
+    ("17:30 IST", 17 * 60 + 30),    # MCX evening session
+    ("21:00 IST", 21 * 60 + 0),     # MCX metals/energy midpoint
+]
+
 # ═══════════════════════════════════════════════════════════════
 #  Sidebar
 # ═══════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown(
-        "<div style='padding:10px 0 6px;color:#00d4ff;font-weight:700;font-size:15px'>⚙️ Settings</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown("---")
-    hours        = st.slider("🕐 News lookback (hours)", 2, 48, 12, step=2)
-    top_n        = st.slider("📰 Max articles", 5, 50, 20, step=5)
-    fetch_prices = st.toggle("📈 Live prices", value=True)
-    auto_refresh = st.toggle("🔄 Auto-refresh", value=False)
-    refresh_mins = st.slider("⏱ Interval (min)", 5, 60, 15, step=5, disabled=not auto_refresh)
+    # ── Settings popover ──────────────────────────────────────
+    with st.popover("⚙️ Settings", use_container_width=True):
+        st.markdown("**Analysis**")
+        hours        = st.slider("🕐 News lookback (hours)", 2, 120, 12, step=2,
+                                 help="For manual runs. Scheduled runs use dynamic lookback from last market close.")
+        top_n        = st.slider("📰 Max articles", 5, 100, 50, step=5,
+                                 help="Scheduled runs always use max (100).")
+        fetch_prices = st.toggle("📈 Live prices", value=True)
+        auto_refresh = st.toggle("🔄 Auto-refresh page", value=False)
+        refresh_mins = st.slider("⏱ Interval (min)", 5, 60, 15, step=5, disabled=not auto_refresh)
+
+        st.markdown("---")
+        st.markdown("**Auto-Run Schedule (IST)**")
+        st.caption("Runs fire automatically when app is open near these times.")
+        _custom_slots = st.session_state.get("custom_slots", list(_DEFAULT_SLOTS))
+        _keep = []
+        for _lbl, _mins in _custom_slots:
+            _h, _m = divmod(_mins, 60)
+            if st.checkbox(f"{_h:02d}:{_m:02d} IST", value=True, key=f"slot_keep_{_lbl}"):
+                _keep.append((_lbl, _mins))
+        if len(_keep) != len(_custom_slots):
+            st.session_state["custom_slots"] = _keep
+            _custom_slots = _keep
+        _sc1, _sc2 = st.columns(2)
+        _new_h = _sc1.number_input("Hour", 0, 23, 9, key="new_slot_h")
+        _new_m = _sc2.number_input("Min",  0, 59, 15, step=5, key="new_slot_m")
+        if st.button("➕ Add Slot", key="add_slot_btn"):
+            _new_lbl = f"{int(_new_h):02d}:{int(_new_m):02d} IST"
+            _new_mins = int(_new_h) * 60 + int(_new_m)
+            if (_new_lbl, _new_mins) not in _custom_slots:
+                _custom_slots = sorted(_custom_slots + [(_new_lbl, _new_mins)], key=lambda x: x[1])
+                st.session_state["custom_slots"] = _custom_slots
+
+        st.markdown("---")
+        st.markdown("**Display Filters**")
+        min_impact   = st.selectbox("Min impact", ["LOW", "MEDIUM", "HIGH", "EXTREME"], index=0)
+        only_direct  = st.checkbox("Direct matches only")
+        only_signals = st.checkbox("With signals only")
 
     st.markdown("---")
     run_btn = st.button("▶  Run Analysis", type="primary", use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("<div style='color:#a8b0d0;font-size:12px;font-weight:600'>DISPLAY FILTERS</div>",
-                unsafe_allow_html=True)
-    min_impact   = st.selectbox("Min impact", ["LOW", "MEDIUM", "HIGH", "EXTREME"], index=0)
-    only_direct  = st.checkbox("Direct matches only")
-    only_signals = st.checkbox("With signals only")
 
     st.markdown("---")
 
@@ -385,6 +436,16 @@ with st.sidebar:
                 saved = _fyers_load()
                 if saved:
                     st.session_state["fyers_token"] = saved
+
+            # Auto-connect silently at 8:20–9:30 IST on weekdays (no button click)
+            if not st.session_state.get("fyers_token") and is_auto_login_configured():
+                _ist_ac  = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+                _ac_mins = _ist_ac.hour * 60 + _ist_ac.minute
+                if _ist_ac.weekday() < 5 and 8 * 60 + 20 <= _ac_mins <= 9 * 60 + 30:
+                    _tok_ac, _ = auto_login()
+                    if _tok_ac:
+                        st.session_state["fyers_token"] = _tok_ac
+                        _fyers_save(_tok_ac)
 
             # Check if auth_code came back in URL after Fyers login
             qp = st.query_params
@@ -521,7 +582,13 @@ def do_run(slot_label: str = "Manual"):
     def cb(step, pct):
         prog.progress(min(pct, 1.0), text=step)
         label.caption(step)
-    result = run_pipeline(hours=hours, top_n=top_n, fetch_prices=fetch_prices, progress_cb=cb)
+    # Scheduled runs use dynamic lookback (last market close → now) + max articles
+    if slot_label == "Manual":
+        _hours, _top_n = hours, top_n
+    else:
+        _hours = _calc_lookback_hours()
+        _top_n = 100
+    result = run_pipeline(hours=_hours, top_n=_top_n, fetch_prices=fetch_prices, progress_cb=cb)
     prog.empty(); label.empty()
     st.session_state["result"]   = result
     st.session_state["last_run"] = datetime.now(tz=timezone.utc)
@@ -533,16 +600,8 @@ if run_btn:
     do_run()
 
 # ═══════════════════════════════════════════════════════════════
-#  Scheduled Auto-Run  (IST slots: 09:15, 13:00, 15:20)
+#  Scheduled Auto-Run  (uses custom or default slots)
 # ═══════════════════════════════════════════════════════════════
-_SLOTS = [
-    ("09:15 IST", 9 * 60 + 15),    # NSE open
-    ("13:00 IST", 13 * 60 + 0),    # NSE midday
-    ("15:20 IST", 15 * 60 + 20),   # NSE close
-    ("17:30 IST", 17 * 60 + 30),   # MCX evening session open
-    ("21:00 IST", 21 * 60 + 0),    # MCX metals/energy midpoint
-]
-
 def _check_schedule() -> None:
     """Fire any due scheduled slot that hasn't run yet today (IST)."""
     ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
@@ -555,7 +614,8 @@ def _check_schedule() -> None:
     for k in [k for k in log if k != today]:
         del log[k]
     today_log = log.setdefault(today, {})
-    for label, slot_mins in _SLOTS:
+    _active_slots = st.session_state.get("custom_slots", list(_DEFAULT_SLOTS))
+    for label, slot_mins in _active_slots:
         # Only fire within a 30-minute window of the scheduled time.
         # Without this, opening the app at 2 PM would trigger the 9:15 slot.
         if slot_mins <= cur < slot_mins + 30 and not today_log.get(label, False):
@@ -821,7 +881,7 @@ with tab_opps:
 
 
 # ───────────────────────────────────────────────────────────────
-#  TAB 3  —  Trading Signals
+#  TAB 3  —  Trading Signals  (Equity + Commodity sub-tabs)
 # ───────────────────────────────────────────────────────────────
 with tab_signals:
     if not result.all_signals:
@@ -834,22 +894,34 @@ with tab_signals:
                          ["Underreaction","Momentum","Macro","Mean-Reversion"],
                          default=["Underreaction","Momentum","Macro","Mean-Reversion"])
 
-        # Group by action for the tab layout
-        buys    = [(item,imp,sig) for item,imp,sig in result.all_signals
-                   if sig.action=="BUY"   and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
-        shorts  = [(item,imp,sig) for item,imp,sig in result.all_signals
-                   if sig.action=="SHORT" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
-        avoids  = [(item,imp,sig) for item,imp,sig in result.all_signals
-                   if sig.action=="AVOID" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
-        notrades = [(item,imp,sig) for item,imp,sig in result.all_signals
-                    if sig.action=="NO TRADE"]
+        # Split equity vs MCX commodity
+        _eq_signals  = [(item,imp,sig) for item,imp,sig in result.all_signals if not _is_mcx(imp)]
+        _mcx_signals = [(item,imp,sig) for item,imp,sig in result.all_signals if _is_mcx(imp)]
 
-        sub1, sub2, sub3, sub4 = st.tabs([
-            f"BUY ({len(buys)})",
-            f"SHORT ({len(shorts)})",
-            f"AVOID ({len(avoids)})",
-            f"NO TRADE ({len(notrades)})",
+        _eq_tab, _mcx_tab = st.tabs([
+            f"📈 Equity / NSE ({len(_eq_signals)})",
+            f"🏭 Commodity / MCX ({len(_mcx_signals)})",
         ])
+
+        def _render_signal_subtabs(signal_list, key_prefix: str):
+            """Render BUY/SHORT/AVOID/NO TRADE sub-tabs for a given signal list."""
+            buys     = [(item,imp,sig) for item,imp,sig in signal_list
+                        if sig.action=="BUY"   and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+            shorts   = [(item,imp,sig) for item,imp,sig in signal_list
+                        if sig.action=="SHORT" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+            avoids   = [(item,imp,sig) for item,imp,sig in signal_list
+                        if sig.action=="AVOID" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+            notrades = [(item,imp,sig) for item,imp,sig in signal_list if sig.action=="NO TRADE"]
+            return buys, shorts, avoids, notrades
+
+        with _eq_tab:
+            buys, shorts, avoids, notrades = _render_signal_subtabs(_eq_signals, "eq")
+            sub1, sub2, sub3, sub4 = st.tabs([
+                f"BUY ({len(buys)})",
+                f"SHORT ({len(shorts)})",
+                f"AVOID ({len(avoids)})",
+                f"NO TRADE ({len(notrades)})",
+            ])
 
         def render_signal_cards(signals, card_class):
             if not signals:
@@ -1110,6 +1182,22 @@ with tab_signals:
         with sub2: render_signal_cards(shorts,   "signal-card-short")
         with sub3: render_signal_cards(avoids,   "signal-card-avoid")
         with sub4: render_signal_cards(notrades, "signal-card-avoid")
+
+        with _mcx_tab:
+            if not _mcx_signals:
+                st.info("No MCX commodity signals in current analysis. Run analysis with commodity-related news in the lookback window.")
+            else:
+                _mcx_buys, _mcx_shorts, _mcx_avoids, _mcx_notrades = _render_signal_subtabs(_mcx_signals, "mcx")
+                _ms1, _ms2, _ms3, _ms4 = st.tabs([
+                    f"BUY ({len(_mcx_buys)})",
+                    f"SHORT ({len(_mcx_shorts)})",
+                    f"AVOID ({len(_mcx_avoids)})",
+                    f"NO TRADE ({len(_mcx_notrades)})",
+                ])
+                with _ms1: render_signal_cards(_mcx_buys,     "signal-card-buy")
+                with _ms2: render_signal_cards(_mcx_shorts,   "signal-card-short")
+                with _ms3: render_signal_cards(_mcx_avoids,   "signal-card-avoid")
+                with _ms4: render_signal_cards(_mcx_notrades, "signal-card-avoid")
 
 
 # ───────────────────────────────────────────────────────────────
