@@ -444,8 +444,16 @@ if auto_refresh:
 #  Header
 # ═══════════════════════════════════════════════════════════════
 mkt_status, mkt_color = market_status()
-ist_now    = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%d %b %Y  %H:%M IST")
-refresh_ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%H:%M IST")
+_now_utc   = datetime.now(timezone.utc)
+_now_ist   = _now_utc + timedelta(hours=5, minutes=30)
+ist_now    = _now_ist.strftime("%d %b %Y  %H:%M IST")
+refresh_ist = _now_ist.strftime("%H:%M IST")
+
+_last_run_utc = st.session_state.get("last_run")
+if _last_run_utc:
+    _last_run_ist = (_last_run_utc + timedelta(hours=5, minutes=30)).strftime("%d %b  %H:%M IST")
+else:
+    _last_run_ist = "Not run yet"
 
 st.markdown(
     f"""
@@ -456,16 +464,20 @@ st.markdown(
           NSE · BSE · US Markets &nbsp;|&nbsp; Sentiment · Signals · Opportunities
         </div>
       </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
         <div class="status-pill">
           <strong>Market Status</strong>
           <span style="color:{mkt_color};font-weight:600">{mkt_status}</span>
         </div>
         <div class="status-pill">
-          <strong>IST Time</strong>{ist_now}
+          <strong>IST</strong>{ist_now}
         </div>
         <div class="status-pill">
-          <strong>Last Refresh</strong>{refresh_ist}
+          <strong>Last Run</strong>{_last_run_ist}
+        </div>
+        <div style="background:rgba(0,212,255,0.08);border:1px solid #00d4ff;border-radius:8px;
+                    padding:4px 10px;font-size:11px;color:#00d4ff;font-weight:700">
+          {_APP_VERSION}
         </div>
       </div>
     </div>
@@ -479,7 +491,7 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 # Version key — bump this string whenever PriceData/TradeSignal schema changes
 # so stale cached objects are discarded automatically on next load
-_APP_VERSION = "v6"
+_APP_VERSION = "v7"
 if st.session_state.get("_app_version") != _APP_VERSION:
     for _k in ["result", "last_run", "bt_result"]:
         st.session_state.pop(_k, None)

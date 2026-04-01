@@ -139,11 +139,19 @@ def run_pipeline(
         reverse=True,
     )[:5]
 
-    # ── 5. Sort underreacted by confidence ───────────────────
+    # ── 5. Sort underreacted by confidence, then deduplicate by symbol ───
     result.underreacted.sort(
         key=lambda x: (x[2].confidence, abs(x[1].expected_move_pct - x[1].actual_move_pct)),
         reverse=True,
     )
+    _seen_syms: set[str] = set()
+    _deduped: list = []
+    for _entry in result.underreacted:
+        _sym = _entry[1].symbol
+        if _sym not in _seen_syms:
+            _seen_syms.add(_sym)
+            _deduped.append(_entry)
+    result.underreacted = _deduped
 
     if progress_cb: progress_cb("Done", 1.0)
     return result
