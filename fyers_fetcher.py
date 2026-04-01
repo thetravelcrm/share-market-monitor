@@ -161,15 +161,22 @@ def auto_login() -> tuple[Optional[str], str]:
     except Exception as e:
         return None, f"Step2 TOTP error: {e}"
 
-    # Step 3 — verify PIN (SHA-256 hashed)
+    # Step 3 — verify PIN
+    # Fyers vagator v2 expects plain PIN string (not hashed)
     try:
-        pin_hash = hashlib.sha256(pin.encode()).hexdigest()
         r3 = sess.post(f"{BASE}/verify_pin",
                        json={"request_key": request_key, "identity_type": "pin",
-                             "identifier": pin_hash}, timeout=10)
+                             "identifier": pin}, timeout=10)
         d3 = r3.json()
         if d3.get("s") != "ok":
-            return None, f"Step3 verify_pin failed: {d3}"
+            # Fallback: try SHA-256 hashed
+            pin_hash = hashlib.sha256(pin.encode()).hexdigest()
+            r3b = sess.post(f"{BASE}/verify_pin",
+                            json={"request_key": request_key, "identity_type": "pin",
+                                  "identifier": pin_hash}, timeout=10)
+            d3 = r3b.json()
+            if d3.get("s") != "ok":
+                return None, f"Step3 verify_pin failed (plain+hashed both tried): {d3}"
         vagator_token = d3.get("data", {}).get("access_token", "")
         if not vagator_token:
             return None, f"Step3 no access_token in response: {d3}"
