@@ -99,17 +99,17 @@ def is_auto_login_configured() -> bool:
         return False
 
 
-def auto_login() -> Optional[str]:
+def auto_login() -> tuple[Optional[str], str]:
     """
     Fully automated Fyers login via TOTP + PIN (Fyers vagator HTTP API).
-    No browser or Selenium needed. Returns access_token or None on failure.
+    Returns (access_token, "") on success, (None, error_message) on failure.
 
     Flow:
       1. POST /send_login_otp  → request_key
       2. POST /verify_otp      → pyotp TOTP code → updated request_key
       3. POST /verify_pin      → SHA-256 hashed PIN → vagator access token
-      4. SessionModel.set_token(vagator_token).generate_authcode() → redirect URL
-      5. Parse auth_code from redirect URL → exchange_auth_code() → final token
+      4. POST api/v3/token     → auth_code
+      5. exchange_auth_code()  → final access_token
     """
     import requests, pyotp, hashlib, urllib.parse
 
@@ -119,57 +119,93 @@ def auto_login() -> Optional[str]:
         totp_secret = st.secrets.get("FYERS_TOTP_SECRET", "")
         pin         = st.secrets.get("FYERS_PIN", "")
     except Exception:
-        return None
+        return None, "Could not read Streamlit secrets"
 
-    if not (cid and sk and totp_secret and pin):
-        return None
+    if not cid or not sk:
+        return None, "FYERS_CLIENT_ID or FYERS_SECRET_KEY missing in secrets"
+    if not totp_secret:
+        return None, "FYERS_TOTP_SECRET missing in secrets"
+    if not pin:
+        return None, "FYERS_PIN missing in secrets"
 
     BASE = "https://api-t2.fyers.in/vagator/v2"
     sess = requests.Session()
 
     # Step 1 — initiate login
-    r1 = sess.post(f"{BASE}/send_login_otp", json={"fy_id": cid, "app_id": "2"})
-    if r1.status_code != 200 or r1.json().get("code") != 200:
-        return None
-    request_key = r1.json()["request_key"]
+    try:
+        r1 = sess.post(f"{BASE}/send_login_otp", json={"fy_id": cid, "app_id": "2"}, timeout=10)
+        d1 = r1.json()
+        if d1.get("code") != 200:
+            return None, f"Step1 send_login_otp failed: {d1}"
+        request_key = d1["request_key"]
+    except Exception as e:
+        return None, f"Step1 network error: {e}"
 
-    # Step 2 — verify TOTP (auto-generated, valid for 30 s window)
-    totp_code = pyotp.TOTP(totp_secret).now()
-    r2 = sess.post(f"{BASE}/verify_otp",
-                   json={"request_key": request_key, "otp": totp_code})
-    if r2.status_code != 200 or r2.json().get("code") != 200:
-        return None
-    request_key = r2.json()["request_key"]
+    # Step 2 — verify TOTP
+    try:
+        totp_code = pyotp.TOTP(totp_secret).now()
+        r2 = sess.post(f"{BASE}/verify_otp",
+                       json={"request_key": request_key, "otp": totp_code}, timeout=10)
+        d2 = r2.json()
+        if d2.get("code") != 200:
+            return None, f"Step2 verify_otp failed: {d2}"
+        request_key = d2["request_key"]
+    except Exception as e:
+        return None, f"Step2 TOTP error: {e}"
 
     # Step 3 — verify PIN (SHA-256 hashed)
-    pin_hash = hashlib.sha256(pin.encode()).hexdigest()
-    r3 = sess.post(f"{BASE}/verify_pin",
-                   json={"request_key": request_key, "identity_type": "pin",
-                         "identifier": pin_hash})
-    if r3.status_code != 200 or r3.json().get("code") != 200:
-        return None
-    vagator_token = r3.json().get("data", {}).get("access_token", "")
-    if not vagator_token:
-        return None
+    try:
+        pin_hash = hashlib.sha256(pin.encode()).hexdigest()
+        r3 = sess.post(f"{BASE}/verify_pin",
+                       json={"request_key": request_key, "identity_type": "pin",
+                             "identifier": pin_hash}, timeout=10)
+        d3 = r3.json()
+        if d3.get("code") != 200:
+            return None, f"Step3 verify_pin failed: {d3}"
+        vagator_token = d3.get("data", {}).get("access_token", "")
+        if not vagator_token:
+            return None, f"Step3 no access_token in response: {d3}"
+    except Exception as e:
+        return None, f"Step3 PIN error: {e}"
 
-    # Step 4 — get auth_code redirect URL via SessionModel
-    from fyers_apiv3 import fyersModel
-    session = fyersModel.SessionModel(
-        client_id=cid, secret_key=sk,
-        redirect_uri=REDIRECT_URI,
-        response_type="code", grant_type="authorization_code",
-    )
-    session.set_token(vagator_token)
-    redirect_url = session.generate_authcode()
+    # Step 4 — get auth_code via Fyers token API
+    try:
+        app_id_short = cid.split("-")[0]   # "IFT522ZFF6" from "IFT522ZFF6-100"
+        r4 = sess.post(
+            "https://api-t1.fyers.in/api/v3/token",
+            headers={"Authorization": f"{cid}:{vagator_token}"},
+            json={
+                "fyers_id":      cid,
+                "app_id":        app_id_short,
+                "redirect_uri":  REDIRECT_URI,
+                "appType":       "100",
+                "code_challenge":"",
+                "state":         "None",
+                "nonce":         "",
+                "response_type": "code",
+                "create_cookie": True,
+            },
+            timeout=10,
+        )
+        d4 = r4.json()
+        redirect_url = d4.get("Url", "")
+        if not redirect_url:
+            return None, f"Step4 token API failed: {d4}"
+        parsed    = urllib.parse.urlparse(redirect_url)
+        auth_code = urllib.parse.parse_qs(parsed.query).get("auth_code", [None])[0]
+        if not auth_code:
+            return None, f"Step4 no auth_code in redirect: {redirect_url}"
+    except Exception as e:
+        return None, f"Step4 token API error: {e}"
 
-    # Parse auth_code from redirect URL query string
-    parsed    = urllib.parse.urlparse(redirect_url)
-    auth_code = urllib.parse.parse_qs(parsed.query).get("auth_code", [None])[0]
-    if not auth_code:
-        return None
-
-    # Step 5 — exchange for final access token
-    return exchange_auth_code(auth_code)
+    # Step 5 — exchange auth_code for final access token
+    try:
+        token = exchange_auth_code(auth_code)
+        if not token:
+            return None, "Step5 exchange_auth_code returned None"
+        return token, ""
+    except Exception as e:
+        return None, f"Step5 exchange error: {e}"
 
 
 def get_quote(symbol: str, access_token: str) -> Optional[dict]:

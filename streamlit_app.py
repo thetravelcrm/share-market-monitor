@@ -414,13 +414,13 @@ with st.sidebar:
                 if is_auto_login_configured():
                     if st.button("🤖 Auto-Connect Fyers", use_container_width=True):
                         with st.spinner("Logging in via TOTP…"):
-                            token = auto_login()
+                            token, _err = auto_login()
                         if token:
                             st.session_state["fyers_token"] = token
                             _fyers_save(token)
                             st.rerun()
                         else:
-                            st.error("Auto-login failed. Try manual connect.")
+                            st.error(f"Auto-login failed: {_err}")
                 auth_url = get_auth_url()
                 st.link_button("🔗 Manual Connect", auth_url, use_container_width=True)
                 _caption = "Auto-Connect uses TOTP — no browser needed" if is_auto_login_configured() else "Log in once — token lasts till midnight"
