@@ -316,11 +316,12 @@ def cur_sym(price_data) -> str:
     if price_data is None: return "₹"
     return "$" if price_data.currency == "USD" else "₹"
 
-_MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
+# Only metal futures tracked in MCX tab (no energy)
+_MCX_METALS = {"SILVERMIC", "GOLDM", "COPPER", "NICKEL", "ZINC", "ALUMINIUM", "LEAD"}
 
-def _is_mcx(imp) -> bool:
-    """True if this impact result is an MCX commodity (not NSE equity)."""
-    return imp.symbol in _MCX_SYMBOLS or imp.sector.startswith("MCX/")
+def _is_mcx_metal(imp) -> bool:
+    """True if this impact result is an MCX metal future."""
+    return imp.symbol in _MCX_METALS or imp.sector in ("MCX/Silver","MCX/Gold","MCX/Metal")
 
 
 def _calc_lookback_hours() -> int:
@@ -685,11 +686,12 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
-tab_impact, tab_opps, tab_signals, tab_sectors, tab_news, \
+tab_impact, tab_opps, tab_signals, tab_mcx, tab_sectors, tab_news, \
 tab_nse, tab_journal, tab_backtest, tab_history = st.tabs([
     "🔥 Top Impacted",
     "⚡ Underreacted",
     "🎯 Trade Signals",
+    "🏅 MCX Metals",
     "📈 Sector Sentiment",
     "📰 News Feed",
     "📊 NSE Data",
@@ -881,7 +883,7 @@ with tab_opps:
 
 
 # ───────────────────────────────────────────────────────────────
-#  TAB 3  —  Trading Signals  (Equity + Commodity sub-tabs)
+#  TAB 3  —  Trading Signals  (Equity / NSE only)
 # ───────────────────────────────────────────────────────────────
 with tab_signals:
     if not result.all_signals:
@@ -894,34 +896,25 @@ with tab_signals:
                          ["Underreaction","Momentum","Macro","Mean-Reversion"],
                          default=["Underreaction","Momentum","Macro","Mean-Reversion"])
 
-        # Split equity vs MCX commodity
-        _eq_signals  = [(item,imp,sig) for item,imp,sig in result.all_signals if not _is_mcx(imp)]
-        _mcx_signals = [(item,imp,sig) for item,imp,sig in result.all_signals if _is_mcx(imp)]
+        # Equity only (MCX metals handled in dedicated tab)
+        _eq_signals = [(item,imp,sig) for item,imp,sig in result.all_signals
+                       if not _is_mcx_metal(imp)]
 
-        _eq_tab, _mcx_tab = st.tabs([
-            f"📈 Equity / NSE ({len(_eq_signals)})",
-            f"🏭 Commodity / MCX ({len(_mcx_signals)})",
+        buys    = [(item,imp,sig) for item,imp,sig in _eq_signals
+                   if sig.action=="BUY"   and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+        shorts  = [(item,imp,sig) for item,imp,sig in _eq_signals
+                   if sig.action=="SHORT" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+        avoids  = [(item,imp,sig) for item,imp,sig in _eq_signals
+                   if sig.action=="AVOID" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+        notrades = [(item,imp,sig) for item,imp,sig in _eq_signals
+                    if sig.action=="NO TRADE"]
+
+        sub1, sub2, sub3, sub4 = st.tabs([
+            f"BUY ({len(buys)})",
+            f"SHORT ({len(shorts)})",
+            f"AVOID ({len(avoids)})",
+            f"NO TRADE ({len(notrades)})",
         ])
-
-        def _render_signal_subtabs(signal_list, key_prefix: str):
-            """Render BUY/SHORT/AVOID/NO TRADE sub-tabs for a given signal list."""
-            buys     = [(item,imp,sig) for item,imp,sig in signal_list
-                        if sig.action=="BUY"   and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
-            shorts   = [(item,imp,sig) for item,imp,sig in signal_list
-                        if sig.action=="SHORT" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
-            avoids   = [(item,imp,sig) for item,imp,sig in signal_list
-                        if sig.action=="AVOID" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
-            notrades = [(item,imp,sig) for item,imp,sig in signal_list if sig.action=="NO TRADE"]
-            return buys, shorts, avoids, notrades
-
-        with _eq_tab:
-            buys, shorts, avoids, notrades = _render_signal_subtabs(_eq_signals, "eq")
-            sub1, sub2, sub3, sub4 = st.tabs([
-                f"BUY ({len(buys)})",
-                f"SHORT ({len(shorts)})",
-                f"AVOID ({len(avoids)})",
-                f"NO TRADE ({len(notrades)})",
-            ])
 
         def render_signal_cards(signals, card_class):
             if not signals:
@@ -1183,21 +1176,65 @@ with tab_signals:
         with sub3: render_signal_cards(avoids,   "signal-card-avoid")
         with sub4: render_signal_cards(notrades, "signal-card-avoid")
 
-        with _mcx_tab:
-            if not _mcx_signals:
-                st.info("No MCX commodity signals in current analysis. Run analysis with commodity-related news in the lookback window.")
-            else:
-                _mcx_buys, _mcx_shorts, _mcx_avoids, _mcx_notrades = _render_signal_subtabs(_mcx_signals, "mcx")
-                _ms1, _ms2, _ms3, _ms4 = st.tabs([
-                    f"BUY ({len(_mcx_buys)})",
-                    f"SHORT ({len(_mcx_shorts)})",
-                    f"AVOID ({len(_mcx_avoids)})",
-                    f"NO TRADE ({len(_mcx_notrades)})",
-                ])
-                with _ms1: render_signal_cards(_mcx_buys,     "signal-card-buy")
-                with _ms2: render_signal_cards(_mcx_shorts,   "signal-card-short")
-                with _ms3: render_signal_cards(_mcx_avoids,   "signal-card-avoid")
-                with _ms4: render_signal_cards(_mcx_notrades, "signal-card-avoid")
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 3b  —  MCX Metals (Gold, Silver, Copper, Nickel, Zinc…)
+# ───────────────────────────────────────────────────────────────
+with tab_mcx:
+    _mcx_signals = [(item, imp, sig) for item, imp, sig in result.all_signals
+                    if _is_mcx_metal(imp)]
+    _mcx_impacts = [(item, sent, [r for r in impacts if _is_mcx_metal(r)])
+                    for item, sent, impacts in result.news_impacts
+                    if any(_is_mcx_metal(r) for r in impacts)]
+
+    if not _mcx_signals and not _mcx_impacts:
+        st.info("No MCX metal signals in current analysis. Tracked metals: "
+                + ", ".join(sorted(_MCX_METALS)))
+    else:
+        if _mcx_impacts:
+            st.markdown("#### 🔥 Top Impacted Metals")
+            for _mi_item, _mi_sent, _mi_imps in _mcx_impacts[:5]:
+                for _mi in _mi_imps[:2]:
+                    _lot_s  = getattr(_mi.price_data, "lot_size", 1) if _mi.price_data else 1
+                    _lot_u  = getattr(_mi.price_data, "lot_unit", "")  if _mi.price_data else ""
+                    _cv     = round(_mi.current_price * _lot_s, 0) if _lot_s > 1 else 0
+                    _imp_c  = {"EXTREME":"badge-extreme","HIGH":"badge-high",
+                               "MEDIUM":"badge-medium","LOW":"badge-low"}.get(_mi.impact_strength,"badge-teal")
+                    _lot_info = f" · Lot: {_lot_s} {_lot_u}" if _lot_s > 1 else ""
+                    _cv_info  = f" · Contract ₹{_cv:,.0f}" if _cv > 0 else ""
+                    _mv_col   = "#00ff88" if _mi.actual_move_pct >= 0 else "#ff4455"
+                    st.markdown(
+                        f'<div class="card" style="margin-bottom:8px">'
+                        f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+                        f'  {badge(_mi.impact_strength, _imp_c)}'
+                        f'  <span style="font-weight:700;color:#ffd700">{_mi.symbol}</span>'
+                        f'  <span style="color:#a8b0d0">— {_mi.name}</span>'
+                        f'  {badge(_mi.sector, "badge-gold")}'
+                        f'</div>'
+                        f'<div style="margin-top:4px;font-size:12px;color:#a8b0d0">'
+                        f'  ₹{_mi.current_price:,.1f}{_lot_info}{_cv_info}'
+                        f'  · Move: <span style="color:{_mv_col}">{_mi.actual_move_pct:+.2f}%</span>'
+                        f'  · Expected: {_mi.expected_move_pct:+.1f}%'
+                        f'</div>'
+                        f'<div style="margin-top:4px;font-size:11px;color:#6b7280">{_mi_item.title[:90]}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        if _mcx_signals:
+            st.markdown("#### 🎯 Metal Signals")
+            _mb = [(item, imp, sig) for item, imp, sig in _mcx_signals if sig.action == "BUY"]
+            _ms = [(item, imp, sig) for item, imp, sig in _mcx_signals if sig.action == "SHORT"]
+            _ma = [(item, imp, sig) for item, imp, sig in _mcx_signals if sig.action == "AVOID"]
+            _mn = [(item, imp, sig) for item, imp, sig in _mcx_signals if sig.action == "NO TRADE"]
+            _mt1, _mt2, _mt3, _mt4 = st.tabs([
+                f"BUY ({len(_mb)})", f"SHORT ({len(_ms)})",
+                f"AVOID ({len(_ma)})", f"NO TRADE ({len(_mn)})",
+            ])
+            with _mt1: render_signal_cards(_mb, "signal-card-buy")
+            with _mt2: render_signal_cards(_ms, "signal-card-short")
+            with _mt3: render_signal_cards(_ma, "signal-card-avoid")
+            with _mt4: render_signal_cards(_mn, "signal-card-avoid")
 
 
 # ───────────────────────────────────────────────────────────────
