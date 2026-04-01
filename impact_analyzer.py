@@ -73,6 +73,14 @@ _MCX_CONV: dict[str, float] = {
     "GOLDM":     0.0321507, # USD/oz × oz_per_g  × USD/INR = INR/g
 }
 
+# MCX local premium over COMEX×USD/INR.
+# Silver has ~8% effective import duty premium (BCD 6% + AIDC 5% + basis diff).
+# Gold matches without correction (duty structure already reflected in spot benchmark).
+# Calibrated: MCX_actual / (COMEX × oz_factor × USD/INR) as of 2026-04
+_MCX_LOCAL_PREMIUM: dict[str, float] = {
+    "SILVERMIC": 1.083,   # ~8.3% import duty + basis vs COMEX SI=F
+}
+
 
 _usd_inr_cache: dict = {"rate": 84.0, "fetched_at": 0.0}
 
@@ -183,17 +191,26 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
         if hist.empty or len(hist) < 2:
             return None
 
-        comex_price = float(hist["Close"].iloc[-1])
-        comex_prev  = float(hist["Close"].iloc[-2])
+        # Prefer fast_info for live/intraday price; fall back to last daily close
+        try:
+            _fi = tk.fast_info
+            _live = float(_fi.last_price) if getattr(_fi, "last_price", None) else 0.0
+            _prev_close = float(_fi.previous_close) if getattr(_fi, "previous_close", None) else 0.0
+            comex_price = _live if _live > 0 else float(hist["Close"].iloc[-1])
+            comex_prev  = _prev_close if _prev_close > 0 else float(hist["Close"].iloc[-2])
+        except Exception:
+            comex_price = float(hist["Close"].iloc[-1])
+            comex_prev  = float(hist["Close"].iloc[-2])
 
         # ── MCX metals: convert COMEX (USD/oz) → MCX (INR/unit) ───
         if symbol in _MCX_CONV:
             usd_inr  = _fetch_usd_inr()
             conv     = _MCX_CONV[symbol]
-            current  = round(comex_price * conv * usd_inr, 2)
-            prev     = round(comex_prev  * conv * usd_inr, 2)
-            h52w     = round(float(hist["High"].max()) * conv * usd_inr, 2)
-            l52w     = round(float(hist["Low"].min())  * conv * usd_inr, 2)
+            premium  = _MCX_LOCAL_PREMIUM.get(symbol, 1.0)
+            current  = round(comex_price * conv * usd_inr * premium, 2)
+            prev     = round(comex_prev  * conv * usd_inr * premium, 2)
+            h52w     = round(float(hist["High"].max()) * conv * usd_inr * premium, 2)
+            l52w     = round(float(hist["Low"].min())  * conv * usd_inr * premium, 2)
             currency = "INR"
         elif is_mcx:
             current  = comex_price
