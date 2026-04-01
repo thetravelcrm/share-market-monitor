@@ -1197,12 +1197,14 @@ with tab_mcx:
                 for _mi in _mi_imps[:2]:
                     _lot_s  = getattr(_mi.price_data, "lot_size", 1) if _mi.price_data else 1
                     _lot_u  = getattr(_mi.price_data, "lot_unit", "")  if _mi.price_data else ""
-                    _cv     = round(_mi.current_price * _lot_s, 0) if _lot_s > 1 else 0
+                    _price  = _mi.price_data.current_price if _mi.price_data else 0.0
+                    _cv     = round(_price * _lot_s, 0) if _lot_s > 1 and _price > 0 else 0
                     _imp_c  = {"EXTREME":"badge-extreme","HIGH":"badge-high",
                                "MEDIUM":"badge-medium","LOW":"badge-low"}.get(_mi.impact_strength,"badge-teal")
                     _lot_info = f" · Lot: {_lot_s} {_lot_u}" if _lot_s > 1 else ""
                     _cv_info  = f" · Contract ₹{_cv:,.0f}" if _cv > 0 else ""
                     _mv_col   = "#00ff88" if _mi.actual_move_pct >= 0 else "#ff4455"
+                    _price_str = f"₹{_price:,.1f}" if _price > 0 else "—"
                     st.markdown(
                         f'<div class="card" style="margin-bottom:8px">'
                         f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
@@ -1212,7 +1214,7 @@ with tab_mcx:
                         f'  {badge(_mi.sector, "badge-gold")}'
                         f'</div>'
                         f'<div style="margin-top:4px;font-size:12px;color:#a8b0d0">'
-                        f'  ₹{_mi.current_price:,.1f}{_lot_info}{_cv_info}'
+                        f'  {_price_str}{_lot_info}{_cv_info}'
                         f'  · Move: <span style="color:{_mv_col}">{_mi.actual_move_pct:+.2f}%</span>'
                         f'  · Expected: {_mi.expected_move_pct:+.1f}%'
                         f'</div>'
