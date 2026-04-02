@@ -204,13 +204,11 @@ section[data-testid="stSidebar"] .stButton button:hover { background: #ffd700; }
 # ═══════════════════════════════════════════════════════════════
 import hashlib as _hashlib
 
-_HARDCODED_PIN = "0522"
-
 def _get_pin() -> str:
     try:
-        return str(st.secrets.get("APP_PIN", _HARDCODED_PIN))
+        return str(st.secrets["APP_PIN"])
     except Exception:
-        return _HARDCODED_PIN
+        return ""
 
 def _daily_token() -> str:
     """Hash of PIN + IST date — changes each midnight IST."""

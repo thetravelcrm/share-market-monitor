@@ -1,0 +1,17 @@
+# Secrets — never commit
+.streamlit/secrets.toml
+*.fyers_session.json
+.fyers_session.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+.venv
+venv/
+
+# OS
+.DS_Store
