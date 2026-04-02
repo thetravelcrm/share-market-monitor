@@ -130,7 +130,7 @@ STOCK_UNIVERSE = {
     "HDFCAMC":   {"name":"HDFC AMC",            "sector":"AMC/Wealth", "keywords":["hdfc amc","hdfcamc"]},
     "NAM-INDIA": {"name":"Nippon Life India AMC","sector":"AMC/Wealth", "keywords":["nippon amc","nam-india","nippon india mutual"]},
     "ISEC":      {"name":"ICICI Securities",    "sector":"AMC/Wealth", "keywords":["icici securities","isec"]},
-    "ANGEL-ONE": {"name":"Angel One",           "sector":"AMC/Wealth", "keywords":["angel one","angel-one","angel broking"]},
+    "ANGELONE":  {"name":"Angel One",           "sector":"AMC/Wealth", "keywords":["angel one","angel-one","angel broking"]},
     "360ONE":    {"name":"360 ONE WAM",         "sector":"AMC/Wealth", "keywords":["360 one","360one"]},
     "CDSL":      {"name":"CDSL",                "sector":"AMC/Wealth", "keywords":["cdsl","central depository services"]},
     "BSE":       {"name":"BSE Ltd",             "sector":"AMC/Wealth", "keywords":["bse limited","bse ltd"]},
@@ -146,11 +146,11 @@ STOCK_UNIVERSE = {
     "MPHASIS":    {"name":"Mphasis",               "sector":"IT", "keywords":["mphasis"]},
     "PERSISTENT": {"name":"Persistent Systems",    "sector":"IT", "keywords":["persistent","persistent systems"]},
     "COFORGE":    {"name":"Coforge",               "sector":"IT", "keywords":["coforge","niit technologies"]},
-    "KPIT":       {"name":"KPIT Technologies",     "sector":"IT", "keywords":["kpit","kpit technologies"]},
+    "KPITTECH":   {"name":"KPIT Technologies",     "sector":"IT", "keywords":["kpit","kpit technologies"]},
     "LTTS":       {"name":"L&T Technology Services","sector":"IT","keywords":["ltts","l&t technology services"]},
     "TATAELXSI":  {"name":"Tata Elxsi",            "sector":"IT", "keywords":["tata elxsi","tataelxsi"]},
     "ZENSARTECH": {"name":"Zensar Technologies",   "sector":"IT", "keywords":["zensar","zensartech"]},
-    "RAMSARUP":   {"name":"Ramco Systems",         "sector":"IT", "keywords":["ramco systems"]},
+    "RAMCOSYS":   {"name":"Ramco Systems",         "sector":"IT", "keywords":["ramco systems"]},
     "BSOFT":      {"name":"BIRLASOFT",             "sector":"IT", "keywords":["birlasoft","bsoft"]},
     "MASTEK":     {"name":"Mastek",                "sector":"IT", "keywords":["mastek"]},
     "HEXAWARE":   {"name":"Hexaware Technologies", "sector":"IT", "keywords":["hexaware"]},
@@ -227,9 +227,9 @@ STOCK_UNIVERSE = {
     "INOXGREEN":  {"name":"INOX Green Energy",     "sector":"Renewables","keywords":["inox green","inoxgreen","inox wind"]},
     "INOXWIND":   {"name":"Inox Wind",             "sector":"Renewables","keywords":["inox wind","inoxwind"]},
     "SUZLON":     {"name":"Suzlon Energy",         "sector":"Renewables","keywords":["suzlon","suzlon energy"]},
-    "GREENKO":    {"name":"Greenko",               "sector":"Renewables","keywords":["greenko"]},
+    "GREENPANEL": {"name":"Greenpanel Industries",  "sector":"Renewables","keywords":["greenko","greenpanel"]},
     "IREDA":      {"name":"IREDA",                 "sector":"Renewables","keywords":["ireda","indian renewable energy"]},
-    "SGBLTD":     {"name":"SGB Ltd",               "sector":"Power","keywords":["sgb"]},
+    "SGBLTD":     {"name":"SGB Ltd",               "sector":"Power","keywords":["sgb"]},  # TODO: verify NSE symbol
 
     # ── CONGLOMERATES / ADANI GROUP ───────────────────────────
     "ADANIENT":   {"name":"Adani Enterprises",     "sector":"Conglomerate","keywords":["adani enterprises","adanient","gautam adani"]},
@@ -237,7 +237,7 @@ STOCK_UNIVERSE = {
     "ADANIGREEN": {"name":"Adani Green Energy",    "sector":"Renewables","keywords":["adani green","adanigreen"]},
     "ADANITRANS": {"name":"Adani Transmission",    "sector":"Power","keywords":["adani transmission","adanitrans"]},
     "AWL":        {"name":"Adani Wilmar",          "sector":"FMCG","keywords":["adani wilmar","awl","fortune oil"]},
-    "NDBGSM":     {"name":"Adani Bravura",         "sector":"Conglomerate","keywords":["adani bravura"]},
+    "ADANIGREEN": {"name":"Adani Green Energy",    "sector":"Conglomerate","keywords":["adani green","adanigreen","adani bravura"]},
 
     # ── AUTOMOBILE ────────────────────────────────────────────
     "MARUTI":     {"name":"Maruti Suzuki",         "sector":"Automobile","keywords":["maruti","maruti suzuki","suzuki india"]},
@@ -312,7 +312,7 @@ STOCK_UNIVERSE = {
     "VENKEYS":    {"name":"Venky's India",         "sector":"FMCG","keywords":["venky's","venkeys"]},
     "JYOTHYLAB":  {"name":"Jyothy Labs",           "sector":"FMCG","keywords":["jyothy labs","jyothylab"]},
     "TATACONSUM": {"name":"Tata Consumer Products","sector":"FMCG","keywords":["tata consumer","tataconsum","tata tea","tetley"]},
-    "MCDOWELL-N": {"name":"United Spirits",        "sector":"FMCG","keywords":["mcdowell","diageo india","united spirits"]},
+    "UNITDSPR":   {"name":"United Spirits (Diageo)","sector":"FMCG","keywords":["mcdowell","diageo india","united spirits"]},
     "RADICO":     {"name":"Radico Khaitan",        "sector":"FMCG","keywords":["radico khaitan","radico"]},
     "UBL":        {"name":"United Breweries",      "sector":"FMCG","keywords":["united breweries","kingfisher beer","ubl"]},
 
@@ -330,8 +330,8 @@ STOCK_UNIVERSE = {
     "BHEL":       {"name":"BHEL",                  "sector":"Infrastructure","keywords":["bhel","bharat heavy electricals"]},
     "BEML":       {"name":"BEML",                  "sector":"Defence","keywords":["beml","bharat earth movers"]},
     "COCHINSHIP": {"name":"Cochin Shipyard",       "sector":"Defence","keywords":["cochin shipyard","cochinship"]},
-    "MAZAGONDOCK":{"name":"Mazagon Dock",          "sector":"Defence","keywords":["mazagon dock","mazagondock"]},
-    "GESHIP":     {"name":"GRSE",                  "sector":"Defence","keywords":["grse","garden reach","geship"]},
+    "MAZDOCK":    {"name":"Mazagon Dock",           "sector":"Defence","keywords":["mazagon dock","mazagondock"]},
+    "GRSE":       {"name":"Garden Reach Shipbuilders","sector":"Defence","keywords":["grse","garden reach","garden reach shipbuilders"]},
     "PARAS":      {"name":"Paras Defence",         "sector":"Defence","keywords":["paras defence"]},
     "DCM":        {"name":"DCM Shriram",           "sector":"Infrastructure","keywords":["dcm shriram"]},
     "ABB":        {"name":"ABB India",             "sector":"Infrastructure","keywords":["abb india"]},
@@ -350,7 +350,7 @@ STOCK_UNIVERSE = {
     "SUNTECK":    {"name":"Sunteck Realty",        "sector":"Real Estate","keywords":["sunteck","sunteck realty"]},
     "SOBHA":      {"name":"Sobha",                 "sector":"Real Estate","keywords":["sobha","sobha limited"]},
     "BRIGADE":    {"name":"Brigade Enterprises",   "sector":"Real Estate","keywords":["brigade","brigade enterprises"]},
-    "MLDNREALTY": {"name":"Macrotech (Lodha)",     "sector":"Real Estate","keywords":["lodha","macrotech","mldnrealty"]},
+    "LODHA":      {"name":"Macrotech (Lodha)",      "sector":"Real Estate","keywords":["lodha","macrotech","mldnrealty"]},
     "PHOENIXLTD": {"name":"Phoenix Mills",         "sector":"Real Estate","keywords":["phoenix mills","phoenixltd"]},
     "MAHLIFE":    {"name":"Mahindra Lifespace",    "sector":"Real Estate","keywords":["mahindra lifespace","mahlife"]},
 
@@ -427,7 +427,7 @@ STOCK_UNIVERSE = {
     # ── LOGISTICS / AVIATION ─────────────────────────────────
     "INDIGO":     {"name":"IndiGo (InterGlobe)",   "sector":"Aviation","keywords":["indigo","interglobe","indigo airlines"]},
     "SPICEJET":   {"name":"SpiceJet",              "sector":"Aviation","keywords":["spicejet","spice jet"]},
-    "AIRINDIA":   {"name":"Air India",             "sector":"Aviation","keywords":["air india","airindia","vistara"]},
+    "INDIGO":     {"name":"IndiGo (InterGlobe)",   "sector":"Aviation","keywords":["air india","airindia","vistara","indigo","interglobe"]},
     "BLUEDART":   {"name":"Blue Dart Express",     "sector":"Logistics","keywords":["blue dart","bluedart"]},
     "DELHIVERY":  {"name":"Delhivery",             "sector":"Logistics","keywords":["delhivery"]},
     "MAHINDCIE":  {"name":"Mahindra CIE",          "sector":"Auto Ancillary","keywords":["mahindra cie"]},
@@ -440,7 +440,7 @@ STOCK_UNIVERSE = {
     "MHRIL":      {"name":"Mahindra Holidays",     "sector":"Hospitality","keywords":["mahindra holidays","mhril","club mahindra"]},
 
     # ── EDUCATION ─────────────────────────────────────────────
-    "CAREEREDGE": {"name":"Career Point",          "sector":"Education","keywords":["career point"]},
+    "CAREERPOINT":{"name":"Career Point",          "sector":"Education","keywords":["career point"]},
     "MTARTECH":   {"name":"MTAR Technologies",     "sector":"Capital Goods","keywords":["mtar","mtar technologies"]},
     "TEAMLEASE":  {"name":"TeamLease Services",    "sector":"Education","keywords":["teamlease","team lease"]},
 
