@@ -588,7 +588,10 @@ if st.session_state.get("_app_version") != _APP_VERSION:
     st.session_state["_app_version"] = _APP_VERSION
 
 if "result"   not in st.session_state: st.session_state["result"]   = None
-if "last_run" not in st.session_state: st.session_state["last_run"] = None
+if "last_run" not in st.session_state:
+    # Restore last run time from persistent history (survives server restarts)
+    from history_store import get_last_run_utc as _get_last_run_utc
+    st.session_state["last_run"] = _get_last_run_utc()
 
 def do_run(slot_label: str = "Manual"):
     # Ensure Fyers is connected before running — silently reconnect if token missing

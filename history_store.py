@@ -1,6 +1,11 @@
 # ─────────────────────────────────────────────────────────────
 #  history_store.py  –  Archive scheduled pipeline runs (signal predictions)
-#  Storage: st.cache_resource (primary) + signal_history.json (backup)
+#
+#  Persistence layers (tried in order on save, first-success wins on load):
+#    1. GitHub Gist  — requires GITHUB_TOKEN + GIST_HISTORY_ID in Streamlit secrets
+#    2. Local JSON   — signal_history.json (works within container lifetime)
+#    3. cache_resource — in-memory (survives reruns, not server restarts)
+#
 #  Auto-prunes entries older than 30 days.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -11,7 +16,71 @@ from datetime import datetime, timezone, timedelta
 
 HISTORY_FILE = "signal_history.json"
 MAX_DAYS     = 30
+_GIST_FILENAME = "signal_history.json"
 
+
+# ── GitHub Gist helpers ───────────────────────────────────────
+
+def _gist_headers() -> dict | None:
+    """Return auth headers if GITHUB_TOKEN is in Streamlit secrets, else None."""
+    try:
+        import streamlit as st
+        token = st.secrets.get("GITHUB_TOKEN", "")
+        return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"} if token else None
+    except Exception:
+        return None
+
+
+def _gist_id() -> str:
+    """Return GIST_HISTORY_ID from Streamlit secrets, or '' if not set."""
+    try:
+        import streamlit as st
+        return st.secrets.get("GIST_HISTORY_ID", "")
+    except Exception:
+        return ""
+
+
+def _gist_load() -> list[dict] | None:
+    """Fetch history from GitHub Gist. Returns None if not configured/failed."""
+    headers = _gist_headers()
+    gist_id = _gist_id()
+    if not headers or not gist_id:
+        return None
+    try:
+        import requests
+        r = requests.get(f"https://api.github.com/gists/{gist_id}",
+                         headers=headers, timeout=15)
+        if r.status_code != 200:
+            return None
+        content = r.json().get("files", {}).get(_GIST_FILENAME, {}).get("content", "")
+        return json.loads(content) if content else []
+    except Exception:
+        return None
+
+
+def _gist_save(entries: list[dict]) -> bool:
+    """Write history to GitHub Gist. Returns True on success."""
+    headers = _gist_headers()
+    gist_id = _gist_id()
+    if not headers or not gist_id:
+        return False
+    try:
+        import requests
+        payload = {
+            "files": {
+                _GIST_FILENAME: {
+                    "content": json.dumps(entries, indent=2, ensure_ascii=False)
+                }
+            }
+        }
+        r = requests.patch(f"https://api.github.com/gists/{gist_id}",
+                           json=payload, headers=headers, timeout=20)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+# ── Signal helpers ────────────────────────────────────────────
 
 def signal_to_dict(sig, imp=None) -> dict:
     """Convert a TradeSignal dataclass (+ optional ImpactResult) to a JSON-safe dict."""
@@ -71,35 +140,40 @@ def _get_history_store():
     """
     Persistent in-memory store via st.cache_resource.
     Survives Streamlit reruns within the same server process.
-    Falls back gracefully when called outside Streamlit (e.g., tests).
     """
     try:
         import streamlit as st
 
         @st.cache_resource
         def _store():
-            return {"entries": [], "loaded_from_file": False}
+            return {"entries": [], "loaded": False}
 
         return _store()
     except Exception:
-        # Outside Streamlit — return a plain dict (no persistence)
-        return {"entries": [], "loaded_from_file": False}
+        return {"entries": [], "loaded": False}
 
 
 def load_history() -> list[dict]:
     """
-    Load history. Priority: cache_resource (in-process) → JSON file.
+    Load history. Priority: cache_resource → Gist → local JSON file.
     Always returns a list (may be empty).
     """
     store = _get_history_store()
 
-    # If cache_resource already has data, use it (survives reruns)
-    if store["entries"]:
+    # Already loaded this process — use cache
+    if store["loaded"] and store["entries"]:
         return store["entries"]
 
-    # First time this process has loaded: try the JSON file
-    if not store["loaded_from_file"]:
-        store["loaded_from_file"] = True
+    if not store["loaded"]:
+        store["loaded"] = True
+
+        # 1. Try GitHub Gist (survives server restarts)
+        gist_data = _gist_load()
+        if gist_data is not None:
+            store["entries"] = _prune(gist_data)
+            return store["entries"]
+
+        # 2. Fall back to local JSON file
         try:
             if os.path.exists(HISTORY_FILE):
                 with open(HISTORY_FILE, "r", encoding="utf-8") as fh:
@@ -111,14 +185,39 @@ def load_history() -> list[dict]:
 
 
 def save_history(entries: list[dict]) -> None:
-    """Persist to cache_resource (in-process) and write JSON file backup."""
+    """Persist to Gist (primary) + local JSON file + cache_resource."""
+    pruned = _prune(entries)
+
+    # Update in-memory cache
     store = _get_history_store()
-    store["entries"] = _prune(entries)
+    store["entries"] = pruned
+
+    # 1. GitHub Gist — survives server restarts
+    _gist_save(pruned)
+
+    # 2. Local JSON file — fast within-container backup
     try:
         with open(HISTORY_FILE, "w", encoding="utf-8") as fh:
-            json.dump(store["entries"], fh, indent=2, ensure_ascii=False)
+            json.dump(pruned, fh, indent=2, ensure_ascii=False)
     except Exception:
-        pass  # Streamlit Cloud filesystem may be read-only — cache_resource still works
+        pass
+
+
+def get_last_run_utc() -> datetime | None:
+    """Return the UTC datetime of the most recent run, or None if no history."""
+    history = load_history()
+    if not history:
+        return None
+    latest = max(history, key=lambda e: e.get("run_time", ""), default=None)
+    if not latest:
+        return None
+    try:
+        dt = datetime.fromisoformat(latest["run_time"])
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
 
 
 def append_run(slot_label: str, signals: list) -> str:
