@@ -542,6 +542,15 @@ ist_now    = _now_ist.strftime("%d %b %Y  %H:%M IST")
 refresh_ist = _now_ist.strftime("%H:%M IST")
 
 _last_run_utc = st.session_state.get("last_run")
+# If session has no last_run (e.g. after server restart), fall back to history
+if not _last_run_utc:
+    try:
+        from history_store import get_last_run_utc as _glr
+        _last_run_utc = _glr()
+        if _last_run_utc:
+            st.session_state["last_run"] = _last_run_utc
+    except Exception:
+        pass
 if _last_run_utc:
     _last_run_ist = (_last_run_utc + timedelta(hours=5, minutes=30)).strftime("%d %b  %H:%M IST")
 else:
@@ -588,10 +597,7 @@ if st.session_state.get("_app_version") != _APP_VERSION:
     st.session_state["_app_version"] = _APP_VERSION
 
 if "result"   not in st.session_state: st.session_state["result"]   = None
-if "last_run" not in st.session_state:
-    # Restore last run time from persistent history (survives server restarts)
-    from history_store import get_last_run_utc as _get_last_run_utc
-    st.session_state["last_run"] = _get_last_run_utc()
+if "last_run" not in st.session_state: st.session_state["last_run"] = None
 
 def do_run(slot_label: str = "Manual"):
     # Ensure Fyers is connected before running — silently reconnect if token missing
