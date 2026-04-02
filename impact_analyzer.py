@@ -43,34 +43,32 @@ class PriceData:
 
 # ── MCX commodity config (module-level for shared access) ─────
 _MCX_PROXY: dict[str, str] = {
-    "SILVERMIC":  "SI=F",
-    "GOLDM":      "GC=F",
-    "CRUDEOIL":   "CL=F",
-    "NATURALGAS": "NG=F",
-    "COPPER":     "HG=F",
-    "ZINC":       "ZNC=F",
-    "ALUMINIUM":  "ALI=F",
-    "NICKEL":     "NI=F",
-    "LEAD":       "LE=F",
+    "SILVERMIC":  "SI=F",    # COMEX Silver (USD/troy oz)
+    "GOLDM":      "GC=F",    # COMEX Gold   (USD/troy oz)
+    "CRUDEOIL":   "CL=F",    # NYMEX WTI Crude (USD/bbl)
+    "NATURALGAS": "NG=F",    # NYMEX Nat Gas (USD/mmbtu)
+    "COPPER":     "HG=F",    # COMEX Copper (USD/lb)
+    "ALUMINIUM":  "ALI=F",   # CME Aluminium (USD/tonne)
+    # ZINC/NICKEL/LEAD are LME-traded; no reliable COMEX yfinance proxy
 }
 
 _MCX_LOT_SIZES: dict[str, tuple[int, str]] = {
-    "SILVERMIC":  (1,    "kg"),   # Silver Micro: Trading Unit = 1 kg (MCX spec)
-    "GOLDM":      (10,   "g"),
-    "CRUDEOIL":   (100,  "bbl"),
-    "NATURALGAS": (1250, "mmbtu"),
-    "COPPER":     (250,  "kg"),
-    "ZINC":       (5000, "kg"),
-    "ALUMINIUM":  (5000, "kg"),
-    "NICKEL":     (250,  "kg"),
-    "LEAD":       (5000, "kg"),
+    "SILVERMIC":  (1,    "kg"),     # Silver Micro: 1 kg per lot (MCX spec)
+    "GOLDM":      (1,    "10g"),   # Gold Mini: 10 g per lot (MCX spec); price quoted per 10g
+    "CRUDEOIL":   (100,  "bbl"),   # Crude Oil: 100 barrels per lot
+    "NATURALGAS": (1250, "mmbtu"), # Natural Gas: 1250 mmbtu per lot
+    "COPPER":     (250,  "kg"),    # Copper: 250 kg per lot
+    "ZINC":       (5000, "kg"),    # Zinc: 5000 kg per lot (no COMEX proxy)
+    "ALUMINIUM":  (5000, "kg"),    # Aluminium: 5000 kg per lot
+    "NICKEL":     (250,  "kg"),    # Nickel: 250 kg per lot (no COMEX proxy)
+    "LEAD":       (5000, "kg"),    # Lead: 5000 kg per lot (no COMEX proxy)
 }
 
 # Conversion: COMEX price (USD/troy oz) → MCX price (INR/unit)
 # 1 troy oz = 31.1035 g → 1 kg = 1000/31.1035 = 32.1507 troy oz
 _MCX_CONV: dict[str, float] = {
-    "SILVERMIC": 32.1507,   # USD/oz × oz_per_kg × USD/INR = INR/kg
-    "GOLDM":     0.0321507, # USD/oz × oz_per_g  × USD/INR = INR/g
+    "SILVERMIC": 32.1507,   # USD/oz × 32.1507 oz/kg  × USD/INR = INR/kg
+    "GOLDM":     0.321507,  # USD/oz × (10g/31.1035g) × USD/INR = INR/10g (GOLDM lot = 10g)
 }
 
 # MCX local premium over COMEX×USD/INR.
@@ -121,12 +119,15 @@ class ImpactResult:
     news_type: str = "Ongoing"          # "Breaking" | "Ongoing" | "Rumor"
 
 
-def _validate_price_data(current: float, prev: float, day_vol: int, symbol: str) -> bool:
+def _validate_price_data(current: float, prev: float, day_vol: int, symbol: str,
+                         skip_volume: bool = False) -> bool:
     """Return False if price data looks stale, corrupted, or nonsensical."""
     if current <= 0 or prev <= 0:
         logger.warning("%s: zero/negative price (curr=%.2f, prev=%.2f)", symbol, current, prev)
         return False
-    if day_vol == 0:
+    # MCX metals use COMEX futures as proxy — COMEX intraday volume is often 0;
+    # skip volume check for these (price range already validated by COMEX plausibility)
+    if not skip_volume and day_vol == 0:
         logger.warning("%s: zero volume — market closed or data stale", symbol)
         return False
     daily_change = abs(current - prev) / prev * 100
@@ -245,7 +246,9 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
 
         lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, ""))
 
-        if not _validate_price_data(current, prev, day_vol, symbol):
+        # For MCX metals using COMEX proxy, COMEX intraday volume is often 0 — skip check
+        _skip_vol = symbol in _MCX_CONV
+        if not _validate_price_data(current, prev, day_vol, symbol, skip_volume=_skip_vol):
             return None
 
         return PriceData(

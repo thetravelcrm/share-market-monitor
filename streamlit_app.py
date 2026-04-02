@@ -736,20 +736,35 @@ def _mphr_live_price(symbol: str) -> float:
     try:
         import yfinance as yf
         t = yf.Ticker(f"{symbol}.NS")
-        p = t.fast_info.last_price
-        return float(p) if p and p > 0 else 0.0
+        p = getattr(t.fast_info, "last_price", None)
+        if p and float(p) > 0:
+            return round(float(p), 2)
+        # fallback to latest daily close
+        h = t.history(period="2d", interval="1d", auto_adjust=True)
+        if not h.empty:
+            return round(float(h["Close"].iloc[-1]), 2)
+        return 0.0
     except Exception:
         return 0.0
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _mcx_live_price(symbol: str) -> float:
-    """Fetch latest MCX futures price via yfinance (cached 5 min)."""
+    """Fetch latest MCX futures price via COMEX proxy + conversion (cached 5 min)."""
     try:
+        from impact_analyzer import _MCX_PROXY, _MCX_CONV, _MCX_LOCAL_PREMIUM, _fetch_usd_inr
         import yfinance as yf
-        t = yf.Ticker(f"{symbol}.MCX")
-        p = t.fast_info.last_price
-        return float(p) if p and p > 0 else 0.0
+        proxy = _MCX_PROXY.get(symbol)
+        if not proxy:
+            return 0.0
+        fi = yf.Ticker(proxy).fast_info
+        raw = float(fi.last_price) if getattr(fi, "last_price", None) else 0.0
+        if raw <= 0:
+            return 0.0
+        if symbol in _MCX_CONV:
+            usd_inr = _fetch_usd_inr()
+            raw = raw * _MCX_CONV[symbol] * usd_inr * _MCX_LOCAL_PREMIUM.get(symbol, 1.0)
+        return round(raw, 2)
     except Exception:
         return 0.0
 
