@@ -721,6 +721,30 @@ st.markdown(
 )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _mphr_live_price(symbol: str) -> float:
+    """Fetch latest NSE price for MPHR current-price column (cached 5 min)."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(f"{symbol}.NS")
+        p = t.fast_info.last_price
+        return float(p) if p and p > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _mcx_live_price(symbol: str) -> float:
+    """Fetch latest MCX futures price via yfinance (cached 5 min)."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(f"{symbol}.MCX")
+        p = t.fast_info.last_price
+        return float(p) if p and p > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
@@ -1700,30 +1724,6 @@ with tab_backtest:
 # ───────────────────────────────────────────────────────────────
 #  TAB 9  —  MPHR (Market Prediction History & Results)
 # ───────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
-def _mphr_live_price(symbol: str) -> float:
-    """Fetch latest NSE price for MPHR current-price column (cached 5 min)."""
-    try:
-        import yfinance as yf
-        t = yf.Ticker(f"{symbol}.NS")
-        p = t.fast_info.last_price
-        return float(p) if p and p > 0 else 0.0
-    except Exception:
-        return 0.0
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _mcx_live_price(symbol: str) -> float:
-    """Fetch latest MCX futures price via yfinance (cached 5 min)."""
-    try:
-        import yfinance as yf
-        t = yf.Ticker(f"{symbol}.MCX")
-        p = t.fast_info.last_price
-        return float(p) if p and p > 0 else 0.0
-    except Exception:
-        return 0.0
-
-
 with tab_history:
     history = load_history()
 
