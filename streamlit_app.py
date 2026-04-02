@@ -642,9 +642,23 @@ def _check_schedule() -> None:
         del log[k]
     today_log = log.setdefault(today, {})
     _active_slots = st.session_state.get("custom_slots", list(_DEFAULT_SLOTS))
+
+    # ── Startup catch-up ────────────────────────────────────────────
+    # If no result yet (fresh session or server restart) and at least one
+    # scheduled slot has already passed today, run the most recently missed
+    # one immediately so the user always gets data when they open the app.
+    if st.session_state.get("result") is None:
+        _past = [(label, sm) for label, sm in _active_slots
+                 if sm <= cur and not today_log.get(label, False)]
+        if _past:
+            _catch_label, _catch_mins = max(_past, key=lambda x: x[1])
+            today_log[_catch_label] = True
+            do_run(slot_label=_catch_label)
+            st.rerun()
+            return
+
+    # ── Normal window check (fires within 30 min of scheduled time) ─
     for label, slot_mins in _active_slots:
-        # Only fire within a 30-minute window of the scheduled time.
-        # Without this, opening the app at 2 PM would trigger the 9:15 slot.
         if slot_mins <= cur < slot_mins + 30 and not today_log.get(label, False):
             today_log[label] = True   # mark before run to prevent double-fire
             do_run(slot_label=label)  # saves to MPHR history inside do_run()
