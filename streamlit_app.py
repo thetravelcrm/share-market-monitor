@@ -650,15 +650,21 @@ def _check_schedule() -> None:
     today_log = log.setdefault(today, {})
     _active_slots = st.session_state.get("custom_slots", list(_DEFAULT_SLOTS))
 
-    # ── Startup catch-up ────────────────────────────────────────────
-    # If no result yet (fresh session or server restart) and at least one
-    # scheduled slot has already passed today, run the most recently missed
-    # one immediately so the user always gets data when they open the app.
-    if st.session_state.get("result") is None:
+    # ── Catch-up: run most recent missed slot ───────────────────────
+    # Fires if a scheduled slot passed without running — whether result is
+    # None (fresh session) or not (tab was closed/backgrounded during window).
+    # Guard: only catch up if last run was >45 min ago (avoids double-firing
+    # right after a manual or scheduled run).
+    _last_run_utc = st.session_state.get("last_run")
+    _mins_since_run = (
+        (datetime.now(tz=timezone.utc) - _last_run_utc).total_seconds() / 60
+        if _last_run_utc else 9999
+    )
+    if _mins_since_run > 45:
         _past = [(label, sm) for label, sm in _active_slots
                  if sm <= cur and not today_log.get(label, False)]
         if _past:
-            _catch_label, _catch_mins = max(_past, key=lambda x: x[1])
+            _catch_label, _ = max(_past, key=lambda x: x[1])
             today_log[_catch_label] = True
             do_run(slot_label=_catch_label)
             st.rerun()
@@ -1749,6 +1755,17 @@ with tab_backtest:
 #  TAB 9  —  MPHR (Market Prediction History & Results)
 # ───────────────────────────────────────────────────────────────
 with tab_history:
+    # ── Gist persistence status ──────────────────────────────────
+    from history_store import gist_configured as _gist_cfg
+    if _gist_cfg():
+        st.success("**History persistence:** GitHub Gist connected — history survives server restarts.", icon="☁️")
+    else:
+        st.warning(
+            "**History not persisted across restarts.** "
+            "Add `GITHUB_TOKEN` and `GIST_HISTORY_ID` to Streamlit secrets to enable cloud persistence.",
+            icon="⚠️"
+        )
+
     history = load_history()
 
     # Auto-check outcomes for signals > 5 days old

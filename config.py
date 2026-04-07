@@ -83,7 +83,7 @@ STOCK_UNIVERSE = {
     "UNIONBANK":  {"name":"Union Bank of India",   "sector":"Banking", "keywords":["union bank","unionbank"]},
     "IOB":        {"name":"Indian Overseas Bank",  "sector":"Banking", "keywords":["iob","indian overseas bank"]},
     "INDIANB":    {"name":"Indian Bank",           "sector":"Banking", "keywords":["indian bank","indianb"]},
-    "UCO":        {"name":"UCO Bank",              "sector":"Banking", "keywords":["uco bank","uco"]},
+    "UCOBANK":    {"name":"UCO Bank",              "sector":"Banking", "keywords":["uco bank","uco"]},
     "MAHABANK":   {"name":"Bank of Maharashtra",   "sector":"Banking", "keywords":["bank of maharashtra","mahabank"]},
     "KARURVYSYA": {"name":"Karur Vysya Bank",      "sector":"Banking", "keywords":["karur vysya","karurvysya"]},
     "CUB":        {"name":"City Union Bank",       "sector":"Banking", "keywords":["city union bank","cub"]},
@@ -318,7 +318,7 @@ STOCK_UNIVERSE = {
 
     # ── INFRASTRUCTURE / DEFENCE ─────────────────────────────
     "LT":         {"name":"Larsen & Toubro",       "sector":"Infrastructure","keywords":["l&t","larsen","larsen and toubro","larsen & toubro"]},
-    "LTFH":       {"name":"L&T Finance",           "sector":"NBFC","keywords":["l&t finance","ltfh"]},
+    "LTF":        {"name":"L&T Finance",           "sector":"NBFC","keywords":["l&t finance","ltfh","ltf"]},
     "GMRINFRA":   {"name":"GMR Airports",          "sector":"Infrastructure","keywords":["gmr","gmr airports","gmrinfra"]},
     "IRCON":      {"name":"IRCON International",   "sector":"Infrastructure","keywords":["ircon","ircon international"]},
     "NBCC":       {"name":"NBCC India",            "sector":"Infrastructure","keywords":["nbcc","national buildings"]},
@@ -413,7 +413,7 @@ STOCK_UNIVERSE = {
     "KAJARIACER": {"name":"Kajaria Ceramics",      "sector":"Consumer","keywords":["kajaria ceramics","kajariacer"]},
     "ASIANPAINT": {"name":"Asian Paints",          "sector":"Consumer","keywords":["asian paints","asianpaint"]},
     "BERGEPAINT": {"name":"Berger Paints",         "sector":"Consumer","keywords":["berger paints","bergepaint"]},
-    "AKZONOBEL":  {"name":"AkzoNobel India",       "sector":"Consumer","keywords":["akzonobel","dulux"]},
+    "AKZOINDIA":  {"name":"AkzoNobel India",       "sector":"Consumer","keywords":["akzonobel","akzoindia","dulux"]},
     "KANSAINER":  {"name":"Kansai Nerolac",        "sector":"Consumer","keywords":["kansai nerolac","kansainer","nerolac"]},
 
     # ── MEDIA / ENTERTAINMENT ────────────────────────────────

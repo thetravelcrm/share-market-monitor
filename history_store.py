@@ -40,6 +40,11 @@ def _gist_id() -> str:
         return ""
 
 
+def gist_configured() -> bool:
+    """True if both GITHUB_TOKEN and GIST_HISTORY_ID are in Streamlit secrets."""
+    return bool(_gist_headers() and _gist_id())
+
+
 def _gist_load() -> list[dict] | None:
     """Fetch history from GitHub Gist. Returns None if not configured/failed."""
     headers = _gist_headers()
@@ -51,10 +56,15 @@ def _gist_load() -> list[dict] | None:
         r = requests.get(f"https://api.github.com/gists/{gist_id}",
                          headers=headers, timeout=15)
         if r.status_code != 200:
+            import logging
+            logging.getLogger("history_store").warning(
+                "Gist load failed: HTTP %s — %s", r.status_code, r.text[:200])
             return None
         content = r.json().get("files", {}).get(_GIST_FILENAME, {}).get("content", "")
         return json.loads(content) if content else []
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("history_store").warning("Gist load exception: %s", e)
         return None
 
 
