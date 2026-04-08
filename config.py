@@ -37,6 +37,14 @@ NEWS_FEEDS = {
     "Bloomberg Markets":         "https://feeds.bloomberg.com/markets/news.rss",
     "FT Markets":                "https://www.ft.com/markets?format=rss",
     "Investing.com India":       "https://in.investing.com/rss/news_25.rss",
+    # ── Metals / Commodities — Silver, Gold, Crude, Copper ───────
+    "Yahoo Finance Silver":      "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SI=F&region=US&lang=en-US",
+    "Yahoo Finance Gold":        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC=F&region=US&lang=en-US",
+    "Yahoo Finance Copper":      "https://feeds.finance.yahoo.com/rss/2.0/headline?s=HG=F&region=US&lang=en-US",
+    "Yahoo Finance CrudeOil":    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=CL=F&region=US&lang=en-US",
+    "CNBC Commodities":          "https://www.cnbc.com/id/15839135/device/rss/rss.html",
+    "Investing.com Commodities": "https://in.investing.com/rss/commodities.rss",
+    "Mining.com":                "https://www.mining.com/feed/",
 }
 
 # ── Impact Thresholds ─────────────────────────────────────────
@@ -453,8 +461,23 @@ STOCK_UNIVERSE = {
     "SETFNIF50":  {"name":"SBI Nifty 50 ETF",      "sector":"ETF/Index","keywords":["sbi nifty etf","setfnif50"]},
 
     # ── MCX COMMODITIES / FUTURES (tracked via commodity indices) ──
-    "SILVERMIC":  {"name":"Silver Micro (MCX)",    "sector":"MCX/Silver","keywords":["silver mcx","silvermic","mcx silver","silver micro","silver mini","silver futures","comex silver"]},
-    "GOLDM":      {"name":"Gold Mini (MCX)",       "sector":"MCX/Gold","keywords":["gold mcx","goldm","mcx gold","gold mini","gold futures","comex gold"]},
+    "SILVERMIC":  {"name":"Silver Micro (MCX)",    "sector":"MCX/Silver","keywords":[
+                      "silver mcx","silvermic","mcx silver","silver micro","silver mini","silver futures","comex silver",
+                      "silver price","spot silver","silver rally","silver slips","silver rises","silver falls",
+                      "silver demand","silver supply","silver output","silver production","silver import",
+                      "silver etf","silverbees","lbma silver","silver fixing","silver ounce",
+                      "precious metals","bullion market","safe haven metal",
+                      "industrial silver","solar silver","ev silver","photovoltaic silver",
+                      "silver tariff","silver duty","silver india","import duty silver",
+                      "si=f","silver coin","silver bar",
+                  ]},
+    "GOLDM":      {"name":"Gold Mini (MCX)",       "sector":"MCX/Gold","keywords":[
+                      "gold mcx","goldm","mcx gold","gold mini","gold futures","comex gold",
+                      "gold price","spot gold","gold rally","gold slips","gold rises","gold falls",
+                      "gold demand","gold import","gold etf","goldbees","lbma gold","gold fixing",
+                      "bullion","safe haven","gold reserve","rbi gold","central bank gold",
+                      "gold tariff","gold duty","gc=f","gold ounce","gold bar","gold coin",
+                  ]},
     "CRUDEOIL":   {"name":"Crude Oil (MCX)",       "sector":"MCX/Energy","keywords":["crude oil mcx","crude futures","brent crude","wti crude","crude oil price"]},
     "NATURALGAS": {"name":"Natural Gas (MCX)",     "sector":"MCX/Energy","keywords":["natural gas mcx","natgas","natural gas price","ng futures"]},
     "COPPER":     {"name":"Copper (MCX)",          "sector":"MCX/Metal","keywords":["copper mcx","copper futures","mcx copper","comex copper"]},
@@ -498,6 +521,11 @@ MACRO_SECTOR_MAP = {
     "silver price":    ["ETF/Silver","MCX/Silver","Metals"],
     "gold":            ["ETF/Gold","MCX/Gold"],
     "silver":          ["ETF/Silver","MCX/Silver"],
+    "bullion":         ["ETF/Gold","ETF/Silver","MCX/Gold","MCX/Silver"],
+    "precious metal":  ["ETF/Gold","ETF/Silver","MCX/Gold","MCX/Silver","Metals"],
+    "safe haven":      ["ETF/Gold","MCX/Gold","ETF/Silver","MCX/Silver"],
+    "comex":           ["MCX/Silver","MCX/Gold","MCX/Metal"],
+    "lbma":            ["MCX/Gold","MCX/Silver"],
     "commodity":       ["MCX/Energy","MCX/Metal","Metals","Oil & Gas"],
     "defence":         ["Defence"],
     "railway":         ["Infrastructure","Capital Goods"],
@@ -520,7 +548,10 @@ CATEGORY_KEYWORDS = {
     "Sector":      ["sector","industry","auto sales","pmi","capacity","output","production"],
     "Company":     ["acquisition","merger","buyback","dividend","deal","contract","order","launch","ipo","stake","joint venture","jv"],
     "Regulatory":  ["sebi","cci","penalty","fine","nclat","court","regulatory","ban","approval","licence","usfda","who","fda"],
-    "Commodity":   ["gold","silver","crude","oil","copper","zinc","aluminium","nickel","mcx","comex","commodity"],
+    "Commodity":   ["gold","silver","crude","oil","copper","zinc","aluminium","nickel","mcx","comex","commodity",
+                    "bullion","precious metal","spot gold","spot silver","safe haven","lbma","kitco",
+                    "silver price","gold price","silver futures","gold futures","industrial metal",
+                    "photovoltaic","solar panel","ev battery","base metal"],
 }
 
 # ── Historical Reaction Patterns ─────────────────────────────
