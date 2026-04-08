@@ -296,6 +296,81 @@ def conf_bar_html(score: int) -> str:
 def impact_score(strength: str) -> float:
     return _IMPACT_SCORE.get(strength, 3.0)
 
+
+def _render_detail_panel(r, sig=None, all_news=None):
+    """Expandable detail panel for a stock — used in Top Impacted & Underreacted tabs."""
+    pd_ = r.price_data
+    tech = getattr(pd_, "technical", None) if pd_ else None
+    sym = cur_sym(pd_)
+
+    col_info, col_price = st.columns([3, 2])
+
+    with col_info:
+        # Why this stock was selected
+        st.markdown("**🔍 Why Selected**")
+        rel_color = {"positive": "#00ff88", "negative": "#ff4455", "mixed": "#ffaa33"}.get(
+            (r.relation or "").lower(), "#a8b0d0")
+        st.markdown(
+            f"**Sector:** {r.sector} &nbsp;|&nbsp; "
+            f"**Relation:** <span style='color:{rel_color}'>{r.relation or '—'}</span> &nbsp;|&nbsp; "
+            f"**News type:** {r.news_type}",
+            unsafe_allow_html=True,
+        )
+        if r.notes:
+            st.caption(r.notes)
+
+        # Triggering news
+        if all_news:
+            st.markdown("**📰 Triggering News**")
+            for item, sent, _ in all_news[:5]:
+                sent_col = "#00ff88" if "Bullish" in sent.label else (
+                    "#ff4455" if "Bearish" in sent.label else "#ffaa33")
+                st.markdown(
+                    f"<span style='color:{sent_col};font-size:11px'>● {sent.label}</span> "
+                    f"<span style='font-size:12px'>{item.title}</span>",
+                    unsafe_allow_html=True,
+                )
+                if getattr(item, "summary", "") and item.summary != item.title:
+                    st.caption(item.summary[:220])
+
+        # Signal rationale
+        if sig and getattr(sig, "rationale", ""):
+            st.markdown("**💡 Signal Rationale**")
+            st.info(sig.rationale, icon="🎯")
+
+    with col_price:
+        st.markdown("**📊 Price & Volume**")
+        if pd_:
+            chg_col = "#00ff88" if pd_.day_change_pct >= 0 else "#ff4455"
+            st.markdown(
+                f"| | |\n|---|---|\n"
+                f"| Price | **{sym}{pd_.current_price:,.2f}** |\n"
+                f"| Day Change | <span style='color:{chg_col}'>{pd_.day_change_pct:+.2f}%</span> |\n"
+                f"| Prev Close | {sym}{pd_.prev_close:,.2f} |\n"
+                f"| 52W High | {sym}{pd_.high_52w:,.2f} |\n"
+                f"| 52W Low | {sym}{pd_.low_52w:,.2f} |\n"
+                f"| Volume Ratio | {pd_.volume_ratio:.2f}x avg |",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Price data unavailable")
+
+        if tech:
+            st.markdown("**📈 Technicals**")
+            rsi_col = "#ff4455" if tech.rsi > 70 else ("#00ff88" if tech.rsi < 30 else "#ffaa33")
+            trend_col = "#00ff88" if tech.trend == "Bullish" else (
+                "#ff4455" if tech.trend == "Bearish" else "#a8b0d0")
+            st.markdown(
+                f"<span style='font-size:12px'>"
+                f"RSI: <b style='color:{rsi_col}'>{tech.rsi:.1f}</b> &nbsp; "
+                f"Trend: <b style='color:{trend_col}'>{tech.trend}</b>"
+                f"</span>",
+                unsafe_allow_html=True,
+            )
+            if getattr(tech, "signals", []):
+                for ts in tech.signals[:3]:
+                    st.caption(f"• {ts}")
+
 def market_status() -> tuple[str, str]:
     """Return (status_label, color) based on IST time."""
     ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
@@ -806,6 +881,12 @@ with tab_impact:
         if not result.top5:
             st.info("No direct matches yet — try increasing lookback hours.")
         else:
+            # Build a lookup: symbol → all (NewsItem, sentiment, ImpactResult) tuples
+            _sym_news: dict = {}
+            for _ni, _ns, _ni_imps in result.news_impacts:
+                for _ni_r in _ni_imps:
+                    _sym_news.setdefault(_ni_r.symbol, []).append((_ni, _ns, _ni_r))
+
             for rank, (headline, r) in enumerate(result.top5, 1):
                 pd_  = r.price_data
                 sym  = cur_sym(pd_)
@@ -843,6 +924,8 @@ with tab_impact:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                with st.expander(f"🔍 {r.symbol} — full analysis & news"):
+                    _render_detail_panel(r, sig=None, all_news=_sym_news.get(r.symbol, []))
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col_chart:
@@ -957,6 +1040,12 @@ with tab_opps:
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+                # Build news list for this stock
+                _opp_news = [(ni, ns, ni_r)
+                             for ni, ns, ni_imps in result.news_impacts
+                             for ni_r in ni_imps if ni_r.symbol == imp.symbol]
+                with st.expander(f"🔍 {imp.symbol} — full analysis & news"):
+                    _render_detail_panel(imp, sig=sig, all_news=_opp_news)
 
         # Summary table
         with st.expander("📋 All Underreacted — Quick Table"):
