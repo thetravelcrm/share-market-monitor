@@ -22,6 +22,10 @@ from technical_analyzer import TechnicalData, compute_technicals
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
+# ── Price fetch cache — avoids duplicate yfinance calls within one analysis run ──
+_price_cache: dict[str, tuple[float, Optional["PriceData"]]] = {}  # symbol → (timestamp, data)
+_PRICE_CACHE_TTL = 300  # seconds (5 min)
+
 
 @dataclass
 class PriceData:
@@ -138,7 +142,21 @@ def _validate_price_data(current: float, prev: float, day_vol: int, symbol: str,
 
 
 def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
-    """Fetch live/latest price data. Uses Fyers API if connected, else yfinance."""
+    """Fetch live/latest price data (cached 5 min). Uses Fyers API if connected, else yfinance."""
+    # ── Cache check ───────────────────────────────────────────────
+    cached = _price_cache.get(symbol)
+    if cached is not None:
+        ts, data = cached
+        if time.time() - ts < _PRICE_CACHE_TTL:
+            return data
+
+    result = _fetch_price_uncached(symbol, exchange)
+    _price_cache[symbol] = (time.time(), result)
+    return result
+
+
+def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
+    """Internal: actual price fetch without caching."""
     _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
 
     # ── Try Fyers for NSE stocks (MCX metals use yfinance COMEX+premium below) ──
@@ -191,10 +209,27 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
     is_mcx = symbol in _MCX_PROXY
     ticker_sym = _MCX_PROXY[symbol] if is_mcx else f"{symbol}.NS"
 
-    try:
-        tk   = yf.Ticker(ticker_sym)
-        hist = tk.history(period="60d", interval="1d", auto_adjust=True)
+    # Retry up to 3 times with backoff on rate limiting
+    hist = None
+    for _attempt in range(3):
+        try:
+            tk   = yf.Ticker(ticker_sym)
+            hist = tk.history(period="60d", interval="1d", auto_adjust=True)
+            break
+        except Exception as _e:
+            _emsg = str(_e).lower()
+            if "too many requests" in _emsg or "rate limit" in _emsg or "429" in _emsg:
+                _wait = 2 ** _attempt * 3  # 3s, 6s, 12s
+                logger.warning("%s: rate limited, retrying in %ds (attempt %d/3)",
+                               symbol, _wait, _attempt + 1)
+                time.sleep(_wait)
+            else:
+                raise
+    if hist is None:
+        logger.error("Price fetch failed for %s: Too Many Requests. Rate limited. Try after a while.", symbol)
+        return None
 
+    try:
         if hist.empty or len(hist) < 2:
             return None
 

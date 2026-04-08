@@ -129,7 +129,6 @@ STOCK_UNIVERSE = {
     # ── WEALTH / BROKING / AMC ────────────────────────────────
     "HDFCAMC":   {"name":"HDFC AMC",            "sector":"AMC/Wealth", "keywords":["hdfc amc","hdfcamc"]},
     "NAM-INDIA": {"name":"Nippon Life India AMC","sector":"AMC/Wealth", "keywords":["nippon amc","nam-india","nippon india mutual"]},
-    "ISEC":      {"name":"ICICI Securities",    "sector":"AMC/Wealth", "keywords":["icici securities","isec"]},
     "ANGELONE":  {"name":"Angel One",           "sector":"AMC/Wealth", "keywords":["angel one","angel-one","angel broking"]},
     "360ONE":    {"name":"360 ONE WAM",         "sector":"AMC/Wealth", "keywords":["360 one","360one"]},
     "CDSL":      {"name":"CDSL",                "sector":"AMC/Wealth", "keywords":["cdsl","central depository services"]},
@@ -319,7 +318,7 @@ STOCK_UNIVERSE = {
     # ── INFRASTRUCTURE / DEFENCE ─────────────────────────────
     "LT":         {"name":"Larsen & Toubro",       "sector":"Infrastructure","keywords":["l&t","larsen","larsen and toubro","larsen & toubro"]},
     "LTF":        {"name":"L&T Finance",           "sector":"NBFC","keywords":["l&t finance","ltfh","ltf"]},
-    "GMRINFRA":   {"name":"GMR Airports",          "sector":"Infrastructure","keywords":["gmr","gmr airports","gmrinfra"]},
+    "GMRAIRPORT": {"name":"GMR Airports",          "sector":"Infrastructure","keywords":["gmr","gmr airports","gmrinfra","gmrairport"]},
     "IRCON":      {"name":"IRCON International",   "sector":"Infrastructure","keywords":["ircon","ircon international"]},
     "NBCC":       {"name":"NBCC India",            "sector":"Infrastructure","keywords":["nbcc","national buildings"]},
     "NCC":        {"name":"NCC Limited",           "sector":"Infrastructure","keywords":["ncc limited"]},
