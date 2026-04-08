@@ -68,11 +68,17 @@ _MCX_LOT_SIZES: dict[str, tuple[int, str]] = {
     "LEAD":       (5000, "kg"),    # Lead: 5000 kg per lot (no COMEX proxy)
 }
 
-# Conversion: COMEX price (USD/troy oz) → MCX price (INR/unit)
+# Conversion: COMEX/NYMEX price (USD/unit) → MCX price (INR/unit)
+# Gold/Silver: troy oz → grams conversion needed.
+# Crude/Gas/Copper/Aluminium: already in USD/native-unit, factor = 1.0 (just × USD/INR)
 # 1 troy oz = 31.1035 g → 1 kg = 1000/31.1035 = 32.1507 troy oz
 _MCX_CONV: dict[str, float] = {
-    "SILVERMIC": 32.1507,   # USD/oz × 32.1507 oz/kg  × USD/INR = INR/kg
-    "GOLDM":     0.321507,  # USD/oz × (10g/31.1035g) × USD/INR = INR/10g (GOLDM lot = 10g)
+    "SILVERMIC":  32.1507,   # USD/oz  × 32.1507 oz/kg    × USD/INR = INR/kg
+    "GOLDM":       0.321507, # USD/oz  × (10g/31.1035g)   × USD/INR = INR/10g
+    "CRUDEOIL":    1.0,      # USD/bbl × 1.0              × USD/INR = INR/bbl
+    "NATURALGAS":  1.0,      # USD/mmbtu × 1.0            × USD/INR = INR/mmbtu
+    "COPPER":      2.20462,  # USD/lb  × 2.20462 lb/kg    × USD/INR = INR/kg
+    "ALUMINIUM":   0.001,    # USD/t   × (1 t/1000 kg)    × USD/INR = INR/kg
 }
 
 # MCX local premium over COMEX×USD/INR.
