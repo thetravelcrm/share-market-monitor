@@ -27,6 +27,116 @@ _price_cache: dict[str, tuple[float, Optional["PriceData"]]] = {}  # symbol → 
 _PRICE_CACHE_TTL = 300  # seconds (5 min)
 
 
+def prefetch_prices(symbols: list[str]) -> None:
+    """
+    Batch-download price history for all symbols in a single yfinance request.
+    Populates _price_cache so subsequent _fetch_price() calls are instant.
+    Silently skips symbols that fail. Call once at the start of a pipeline run.
+    """
+    now = time.time()
+    # Only fetch symbols not already in cache
+    to_fetch = [s for s in symbols
+                if s not in _price_cache or (now - _price_cache[s][0]) >= _PRICE_CACHE_TTL]
+    if not to_fetch:
+        return
+
+    # Map NSE symbols → yfinance tickers
+    tickers = [_MCX_PROXY.get(s, f"{s}.NS") for s in to_fetch]
+
+    logger.info("Batch-prefetching %d symbols via yf.download()…", len(tickers))
+    try:
+        raw = yf.download(
+            tickers,
+            period="60d",
+            interval="1d",
+            auto_adjust=True,
+            group_by="ticker",
+            progress=False,
+            threads=True,
+        )
+    except Exception as exc:
+        logger.warning("Batch prefetch failed (%s) — falling back to per-symbol fetch", exc)
+        return
+
+    usd_inr = _fetch_usd_inr()
+
+    for sym, ticker in zip(to_fetch, tickers):
+        try:
+            # Handle single vs multi-ticker download shape
+            if len(tickers) == 1:
+                hist = raw
+            else:
+                hist = raw[ticker] if ticker in raw.columns.get_level_values(0) else pd.DataFrame()
+
+            hist = hist.dropna(how="all")
+            if hist.empty or len(hist) < 2:
+                _price_cache[sym] = (now, None)
+                continue
+
+            raw_price  = float(hist["Close"].iloc[-1])
+            raw_prev   = float(hist["Close"].iloc[-2])
+
+            # Apply MCX conversion
+            if sym in _MCX_CONV:
+                conv    = _MCX_CONV[sym]
+                premium = _MCX_LOCAL_PREMIUM.get(sym, 1.0)
+                current = round(raw_price * conv * usd_inr * premium, 2)
+                prev    = round(raw_prev  * conv * usd_inr * premium, 2)
+                h52w    = round(float(hist["High"].max()) * conv * usd_inr * premium, 2)
+                l52w    = round(float(hist["Low"].min())  * conv * usd_inr * premium, 2)
+                currency = "INR"
+            elif sym in _MCX_PROXY:
+                current  = raw_price;  prev = raw_prev
+                h52w     = float(hist["High"].max())
+                l52w     = float(hist["Low"].min())
+                currency = "USD"
+            else:
+                current  = raw_price;  prev = raw_prev
+                h52w     = float(hist["High"].max())
+                l52w     = float(hist["Low"].min())
+                currency = "INR"
+
+            if current <= 0 or prev <= 0:
+                _price_cache[sym] = (now, None)
+                continue
+
+            day_chg   = round((current - prev) / prev * 100, 2)
+            day_vol   = int(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else 0
+            avg_vol   = int(hist["Volume"].iloc[-20:].mean()) if len(hist) >= 20 and "Volume" in hist.columns else day_vol
+            vol_ratio = round(day_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+            _skip_vol = sym in _MCX_PROXY
+            if not _skip_vol and day_vol == 0:
+                _price_cache[sym] = (now, None)
+                continue
+
+            tech      = compute_technicals(hist, raw_price)
+            lot_s, lot_u = _MCX_LOT_SIZES.get(sym, (1, ""))
+
+            _price_cache[sym] = (now, PriceData(
+                symbol=sym,
+                current_price=round(current, 2),
+                prev_close=round(prev, 2),
+                day_change_pct=day_chg,
+                day_volume=day_vol,
+                avg_volume_20d=avg_vol,
+                volume_ratio=vol_ratio,
+                high_52w=round(h52w, 2),
+                low_52w=round(l52w, 2),
+                market_cap_cr=0,
+                currency=currency,
+                technical=tech,
+                lot_size=lot_s,
+                lot_unit=lot_u,
+            ))
+        except Exception as exc:
+            logger.debug("Prefetch parse failed for %s: %s", sym, exc)
+            _price_cache[sym] = (now, None)
+
+    logger.info("Prefetch complete — %d/%d symbols cached",
+                sum(1 for s in to_fetch if _price_cache.get(s, (0, None))[1] is not None),
+                len(to_fetch))
+
+
 @dataclass
 class PriceData:
     symbol: str
@@ -215,24 +325,11 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
     is_mcx = symbol in _MCX_PROXY
     ticker_sym = _MCX_PROXY[symbol] if is_mcx else f"{symbol}.NS"
 
-    # Retry up to 3 times with backoff on rate limiting
-    hist = None
-    for _attempt in range(3):
-        try:
-            tk   = yf.Ticker(ticker_sym)
-            hist = tk.history(period="60d", interval="1d", auto_adjust=True)
-            break
-        except Exception as _e:
-            _emsg = str(_e).lower()
-            if "too many requests" in _emsg or "rate limit" in _emsg or "429" in _emsg:
-                _wait = 2 ** _attempt * 3  # 3s, 6s, 12s
-                logger.warning("%s: rate limited, retrying in %ds (attempt %d/3)",
-                               symbol, _wait, _attempt + 1)
-                time.sleep(_wait)
-            else:
-                raise
-    if hist is None:
-        logger.error("Price fetch failed for %s: Too Many Requests. Rate limited. Try after a while.", symbol)
+    try:
+        tk   = yf.Ticker(ticker_sym)
+        hist = tk.history(period="60d", interval="1d", auto_adjust=True)
+    except Exception as exc:
+        logger.error("Price fetch failed for %s: %s", symbol, exc)
         return None
 
     try:

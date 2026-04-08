@@ -10,7 +10,7 @@ from typing import Optional
 from news_fetcher        import fetch_all_feeds, deduplicate, NewsItem
 from sentiment_analyzer  import analyze as analyze_sentiment, SentimentResult
 from stock_mapper        import map_stocks
-from impact_analyzer     import analyze_impact, ImpactResult
+from impact_analyzer     import analyze_impact, prefetch_prices, ImpactResult
 from signal_engine       import generate_signal, TradeSignal
 
 _IMPACT_ORDER = {"EXTREME": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
@@ -78,19 +78,30 @@ def run_pipeline(
         result.warnings.append("No articles found — check connectivity or increase --hours.")
         return result
 
-    # ── 2. NLP + Impact per item ──────────────────────────────
+    # ── 2. Pre-map stocks + batch-prefetch all prices ─────────
+    if progress_cb: progress_cb("Pre-fetching prices…", 0.08)
+    _pre_mapped: list[tuple[NewsItem, SentimentResult, list]] = []
+    _all_symbols: set[str] = set()
+    for item in items[:top_n]:
+        sentiment = analyze_sentiment(item)
+        if abs(sentiment.score) < 0.03 and not sentiment.macro_sectors:
+            _pre_mapped.append((item, sentiment, []))
+            continue
+        matches = map_stocks(item, sentiment)
+        _pre_mapped.append((item, sentiment, matches))
+        for m in matches:
+            _all_symbols.add(m.symbol)
+    if fetch_prices and _all_symbols:
+        prefetch_prices(list(_all_symbols))
+
+    # ── 3. NLP + Impact per item ──────────────────────────────
     total = min(len(items), top_n)
     all_impacts: list[tuple[NewsItem, SentimentResult, list[ImpactResult]]] = []
 
-    for i, item in enumerate(items[:top_n]):
+    for i, (item, sentiment, matches) in enumerate(_pre_mapped):
         if progress_cb:
             progress_cb(f"Analysing: {item.title[:60]}…", 0.1 + 0.8 * (i / total))
 
-        sentiment = analyze_sentiment(item)
-        if abs(sentiment.score) < 0.03 and not sentiment.macro_sectors:
-            continue
-
-        matches = map_stocks(item, sentiment)
         if not matches:
             continue
 
