@@ -357,12 +357,12 @@ def _render_detail_panel(r, sig=None, all_news=None):
 
         if tech:
             st.markdown("**📈 Technicals**")
-            rsi_col = "#ff4455" if tech.rsi > 70 else ("#00ff88" if tech.rsi < 30 else "#ffaa33")
-            trend_col = "#00ff88" if tech.trend == "Bullish" else (
-                "#ff4455" if tech.trend == "Bearish" else "#a8b0d0")
+            rsi_col = "#ff4455" if tech.rsi_14 > 70 else ("#00ff88" if tech.rsi_14 < 30 else "#ffaa33")
+            trend_col = "#00ff88" if tech.trend == "Uptrend" else (
+                "#ff4455" if tech.trend == "Downtrend" else "#a8b0d0")
             st.markdown(
                 f"<span style='font-size:12px'>"
-                f"RSI: <b style='color:{rsi_col}'>{tech.rsi:.1f}</b> &nbsp; "
+                f"RSI: <b style='color:{rsi_col}'>{tech.rsi_14:.1f}</b> &nbsp; "
                 f"Trend: <b style='color:{trend_col}'>{tech.trend}</b>"
                 f"</span>",
                 unsafe_allow_html=True,
