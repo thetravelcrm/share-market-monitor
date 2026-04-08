@@ -246,8 +246,8 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
 
         lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, ""))
 
-        # For MCX metals using COMEX proxy, COMEX intraday volume is often 0 — skip check
-        _skip_vol = symbol in _MCX_CONV
+        # For all MCX proxy symbols (COMEX/NYMEX futures), intraday volume is often 0 — skip check
+        _skip_vol = symbol in _MCX_PROXY
         if not _validate_price_data(current, prev, day_vol, symbol, skip_volume=_skip_vol):
             return None
 
