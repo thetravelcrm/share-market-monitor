@@ -23,6 +23,11 @@ _FINANCE_LEXICON = {
     "recovery":     1.5,  "bullish":      2.5,  "growth":       1.2,
     "approval":     1.8,  "approved":     1.8,  "contract":     1.5,
     "deal":         1.2,  "partnership":  1.2,  "profit":       1.5,
+    # Legal resolution (positive for the company)
+    "dismissal":    2.5,  "dismissed":    2.5,  "acquittal":    3.0,
+    "acquitted":    3.0,  "cleared":      2.0,  "exonerated":   3.0,
+    "quashed":      2.5,  "withdrawn":    1.5,  "settled":      1.2,
+    "relief":       1.5,  "upheld":       1.5,  "vindicated":   2.5,
     # Negative signals
     "miss":        -2.5,  "misses":      -2.5,  "downgrade":   -2.0,
     "downgraded":  -2.0,  "selloff":     -2.5,  "crash":       -3.0,
@@ -61,6 +66,13 @@ _NEGATION_RULES = [
      "missed expectations"),
     (re.compile(r'\bunlikely\s+to\s+(rally|surge|beat|recover|grow)\b', re.I),
      "stagnation"),
+    # Legal resolution: "fraud case dismissal/seek dismiss/charges dropped" → positive for company
+    (re.compile(r'\b(fraud|lawsuit|case|charges?|probe|investigation)\s+\w*\s*(dismiss|dismissal|dropped|quashed|cleared|withdrawn|seek\s+dismiss)\b', re.I),
+     "case dismissal relief vindicated"),
+    (re.compile(r'\bseek(ing|s)?\s+(to\s+)?(dismiss|quash|drop|challenge|fight)\b', re.I),
+     "seeking dismissal relief"),
+    (re.compile(r'\bcharges?\s+(drop|dismiss|quash|clear|withdraw)\w*\b', re.I),
+     "charges cleared dismissed"),
 ]
 
 
@@ -76,6 +88,12 @@ _RUMOR_KW    = ["rumor", "rumour", "sources say", "reportedly", "speculation",
                 "unconfirmed", "likely to", "may consider", "could announce"]
 
 
+_FUTURE_KW = ["by april", "by may", "by june", "by july", "by august", "by september",
+              "by october", "by november", "by december", "by january", "by february", "by march",
+              "deadline", "by end of", "expected to", "scheduled for", "set for", "planned for",
+              "will be", "to be held", "hearing on", "court date"]
+
+
 def _classify_news(text: str) -> tuple[str, str]:
     """Return (news_type, time_relevance)."""
     tl = text.lower()
@@ -83,6 +101,8 @@ def _classify_news(text: str) -> tuple[str, str]:
         return "Breaking", "Immediate"
     if any(kw in tl for kw in _RUMOR_KW):
         return "Rumor", "Lagging"
+    if any(kw in tl for kw in _FUTURE_KW):
+        return "Ongoing", "Lagging"
     return "Ongoing", "Short-term"
 
 
