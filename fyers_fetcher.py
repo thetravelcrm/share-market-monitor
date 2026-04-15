@@ -293,3 +293,42 @@ def get_quote(symbol: str, access_token: str) -> Optional[dict]:
         }
     except Exception:
         return None
+
+
+def get_history(symbol: str, access_token: str,
+                resolution: str, range_from: str, range_to: str,
+                cont_flag: int = 1) -> "pd.DataFrame":
+    """
+    Fetch OHLCV history from Fyers API.
+
+    symbol:     internal symbol e.g. "SILVERMIC"
+    resolution: "15" = 15m, "60" = 1H, "D" = daily
+    range_from/to: "yyyy-mm-dd"
+    cont_flag:  1 = continuous contract (use for MCX futures)
+
+    Returns DataFrame with DatetimeIndex (UTC) and columns Open/High/Low/Close/Volume.
+    Returns empty DataFrame on error.
+    """
+    import pandas as pd
+    try:
+        fyers = get_fyers_model(access_token)
+        fyers_sym = _mcx_fyers_symbol(symbol) if symbol in _MCX_SYMBOLS else f"NSE:{symbol}-EQ"
+        resp = fyers.history({
+            "symbol":      fyers_sym,
+            "resolution":  resolution,
+            "date_format": "1",
+            "range_from":  range_from,
+            "range_to":    range_to,
+            "cont_flag":   str(cont_flag),
+        })
+        if resp.get("s") != "ok":
+            return pd.DataFrame()
+        candles = resp.get("candles", [])
+        if not candles:
+            return pd.DataFrame()
+        df = pd.DataFrame(candles,
+                          columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+        return df.set_index("timestamp")
+    except Exception:
+        return pd.DataFrame()

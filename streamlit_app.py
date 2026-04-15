@@ -854,7 +854,7 @@ def _mcx_live_price(symbol: str) -> float:
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
 tab_impact, tab_opps, tab_signals, tab_mcx, tab_sectors, tab_news, \
-tab_nse, tab_journal, tab_backtest, tab_history = st.tabs([
+tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic = st.tabs([
     "🔥 Top Impacted",
     "⚡ Underreacted",
     "🎯 Trade Signals",
@@ -865,6 +865,7 @@ tab_nse, tab_journal, tab_backtest, tab_history = st.tabs([
     "📓 Trade Journal",
     "🔬 Backtest",
     "📊 MPHR",
+    "🥈 SILVERMIC",
 ])
 
 
@@ -2205,6 +2206,200 @@ with tab_history:
             )
 
     st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 11  —  🥈 SILVERMIC  (VWAP + EMA9/21 + SuperTrend MTF)
+# ───────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _sm_live(token: str):
+    from silvermic_strategy import analyze
+    return analyze(token)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _sm_backtest(token: str, days: int):
+    from silvermic_strategy import backtest
+    return backtest(token, days)
+
+
+with tab_silvermic:
+    st.markdown("### 🥈 SILVERMIC — VWAP + EMA9/21 + SuperTrend MTF (Long Only)")
+
+    # Guard: need a Fyers token
+    _sm_token = st.session_state.get("fyers_token", "")
+    if not _sm_token:
+        st.warning("Connect your Fyers account (sidebar) to use this strategy.")
+        st.stop()
+
+    # ── Live signal ──────────────────────────────────────────────
+    _sm_col_refresh, _sm_col_ts = st.columns([1, 4])
+    with _sm_col_refresh:
+        if st.button("🔄 Refresh Signal", key="sm_refresh"):
+            st.cache_data.clear()
+
+    try:
+        _sm_result = _sm_live(_sm_token)
+
+        _htf  = _sm_result.htf
+        _ent  = _sm_result.entry
+        _sig  = _sm_result.signal
+        _ago  = int((datetime.now(timezone.utc) - _sm_result.fetched_at).total_seconds() / 60)
+
+        with _sm_col_ts:
+            st.caption(f"Last updated: {_ago}m ago")
+
+        # ── Section 1: 1H Trend Filter ───────────────────────────
+        st.markdown("#### 1H Trend Filter")
+        _sm_c1, _sm_c2, _sm_c3, _sm_c4 = st.columns(4)
+
+        def _sm_tile(col, label, ok: bool, value: str):
+            color = "#00ff88" if ok else "#ff4455"
+            icon  = "✅" if ok else "❌"
+            col.markdown(
+                f"<div style='background:#141829;border:1px solid {color};border-radius:8px;"
+                f"padding:12px;text-align:center'>"
+                f"<div style='font-size:20px'>{icon}</div>"
+                f"<div style='color:#a0aec0;font-size:11px;margin:4px 0'>{label}</div>"
+                f"<div style='color:{color};font-weight:700;font-size:13px'>{value}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        _sm_tile(_sm_c1, "Price > ST",    _htf["price_above_st"], f"₹{_htf['close']:,.0f} vs ₹{_htf['st_line']:,.0f}")
+        _sm_tile(_sm_c2, "ST Bullish",    _htf["st_bullish"],     "Bullish" if _htf["st_bullish"] else "Bearish")
+        _sm_tile(_sm_c3, "EMA9 > EMA21",  _htf["ema_bull"],       f"₹{_htf['ema9']:,.0f} vs ₹{_htf['ema21']:,.0f}")
+        _sm_tile(_sm_c4, "RSI > 50",      _htf["rsi_bull"],       f"RSI {_htf['rsi']:.1f}")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Section 2: Live Signal ───────────────────────────────
+        st.markdown("#### 15m Entry Signal")
+        _sm_left, _sm_right = st.columns([3, 2])
+
+        with _sm_left:
+            def _sm_check(label: str, ok: bool, note: str = "") -> None:
+                icon  = "✅" if ok else "❌"
+                color = "#00ff88" if ok else "#ff4455"
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:8px;"
+                    f"padding:6px 0;border-bottom:1px solid #1a1f3a'>"
+                    f"<span style='font-size:16px'>{icon}</span>"
+                    f"<span style='color:#e0e6ff;flex:1'>{label}</span>"
+                    f"<span style='color:{color};font-size:12px'>{note}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            _sm_check("HTF Bull (1H)",      _htf["htf_bull"],       "1H OK" if _htf["htf_bull"] else "1H Weak")
+            _sm_check("Above VWAP",         _ent["above_vwap"],     f"₹{_ent['close']:,.0f} vs ₹{_ent['vwap']:,.0f}")
+            _sm_check("EMA9 > EMA21 (15m)", _ent["ema_above"],      f"₹{_ent['ema9']:,.0f} vs ₹{_ent['ema21']:,.0f}")
+            _sm_check("RSI > 52",           _ent["rsi_ok"],         f"RSI {_ent['rsi']:.1f}")
+            _sm_check("Bullish Candle",      _ent["bull_candle"],    "")
+            _sm_check("Pullback to EMA Zone", _ent["pullback"],      "")
+            _sm_check("EMA Spread ≥ 0.09%",  _ent["strong_trend"],  f"{_ent['spread_pct']:.3f}%")
+
+        with _sm_right:
+            if _sig == "LONG":
+                _box_color  = "#00ff88"
+                _box_bg     = "#0a2015"
+                _box_border = "#00ff88"
+                _box_label  = "LONG SETUP"
+            else:
+                _box_color  = "#a0aec0"
+                _box_bg     = "#141829"
+                _box_border = "#2d3748"
+                _box_label  = "WAITING..."
+
+            st.markdown(
+                f"<div style='background:{_box_bg};border:2px solid {_box_border};"
+                f"border-radius:12px;padding:24px;text-align:center;margin-bottom:12px'>"
+                f"<div style='color:{_box_color};font-size:32px;font-weight:900;"
+                f"letter-spacing:2px'>{_box_label}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            if _sig == "LONG":
+                from silvermic_strategy import LOT_SIZE as _SM_LOT
+                _ep   = _ent["entry_price"]
+                _sl   = _ent["stop_loss"]
+                _atr  = _ent["atr"]
+                _c1_p = _ep + 1500 / _SM_LOT
+                _c2_p = _ep + 4000 / _SM_LOT
+                _c3_p = _ep + 11000 / _SM_LOT
+                st.markdown(
+                    f"<table style='width:100%;border-collapse:collapse;font-size:12px'>"
+                    f"<tr><td style='color:#a0aec0;padding:3px 0'>Entry</td>"
+                    f"<td style='color:#e0e6ff;text-align:right;font-weight:600'>₹{_ep:,.2f}</td></tr>"
+                    f"<tr><td style='color:#ff4455;padding:3px 0'>Stop Loss</td>"
+                    f"<td style='color:#ff4455;text-align:right;font-weight:600'>₹{_sl:,.2f}</td></tr>"
+                    f"<tr><td style='color:#f6ad55;padding:3px 0'>Cushion ₹1,500</td>"
+                    f"<td style='color:#f6ad55;text-align:right'>₹{_c1_p:,.2f}</td></tr>"
+                    f"<tr><td style='color:#68d391;padding:3px 0'>Mid ₹4,000</td>"
+                    f"<td style='color:#68d391;text-align:right'>₹{_c2_p:,.2f}</td></tr>"
+                    f"<tr><td style='color:#00ff88;padding:3px 0'>Big ₹11,000</td>"
+                    f"<td style='color:#00ff88;text-align:right'>₹{_c3_p:,.2f}</td></tr>"
+                    f"</table>",
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Section 3: Backtest ──────────────────────────────────
+        with st.expander("📊 Backtest Results", expanded=False):
+            _sm_days = st.selectbox("Backtest window", [30, 60, 90],
+                                    index=2, key="sm_bt_days")
+            if st.button("▶ Run Backtest", key="sm_run_bt"):
+                with st.spinner("Running backtest…"):
+                    try:
+                        _bt_trades, _bt_summary = _sm_backtest(_sm_token, _sm_days)
+
+                        # Summary row
+                        _bm1, _bm2, _bm3, _bm4, _bm5, _bm6 = st.columns(6)
+                        _bm1.metric("Trades",       _bt_summary["total"])
+                        _bm2.metric("Win Rate",     f"{_bt_summary['win_rate']}%")
+                        _pnl_color = "normal" if _bt_summary["total_pnl"] >= 0 else "inverse"
+                        _bm3.metric("Total P&L",    f"₹{_bt_summary['total_pnl']:,.0f}",
+                                    delta_color=_pnl_color)
+                        _bm4.metric("Avg Win",      f"₹{_bt_summary['avg_win']:,.0f}")
+                        _bm5.metric("Avg Loss",     f"₹{_bt_summary['avg_loss']:,.0f}")
+                        _bm6.metric("Max Drawdown", f"₹{_bt_summary['max_drawdown']:,.0f}")
+
+                        # Equity curve
+                        if _bt_summary["equity"]:
+                            st.line_chart(
+                                pd.Series(_bt_summary["equity"], name="Equity ₹"),
+                                use_container_width=True,
+                            )
+
+                        # Trade log
+                        if _bt_trades:
+                            _log_rows = []
+                            for _t in _bt_trades:
+                                _ist_entry = _t.entry_time + IST_OFFSET if _t.entry_time else None
+                                _ist_exit  = _t.exit_time  + IST_OFFSET if _t.exit_time  else None
+                                _log_rows.append({
+                                    "Entry (IST)":  _ist_entry.strftime("%d-%b %H:%M") if _ist_entry else "",
+                                    "Exit (IST)":   _ist_exit.strftime("%d-%b %H:%M")  if _ist_exit  else "",
+                                    "Entry ₹":      f"₹{_t.entry_price:,.2f}",
+                                    "Exit ₹":       f"₹{_t.exit_price:,.2f}"  if _t.exit_price else "-",
+                                    "P&L ₹":        f"₹{_t.pnl_rs:+,.0f}",
+                                    "Reason":       _t.exit_reason,
+                                })
+                            st.dataframe(pd.DataFrame(_log_rows),
+                                         use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No trades found in this backtest window.")
+
+                    except RuntimeError as _e:
+                        st.error(str(_e))
+
+    except RuntimeError as _sm_err:
+        st.error(str(_sm_err))
+    except Exception as _sm_exc:
+        st.error(f"Strategy error: {_sm_exc}")
 
 
 # ── Footer ────────────────────────────────────────────────────
