@@ -42,16 +42,17 @@ def _strict_filter(result: ImpactResult) -> Optional[str]:
     if not tech:
         return "No technical data available"
 
-    # Volume must be above average
-    if result.volume_ratio < 1.0:
-        return f"Low volume ({result.volume_ratio:.1f}x avg)"
+    # Only block truly dead volume (< 0.5x avg); volume_dry already catches this
+    # Removing the < 1.0 gate — slightly below-average volume is normal on news days
 
     # Market regime must be favorable
     regime = getattr(tech, "market_regime", "Unknown")
     if regime == "LowLiquidity":
         return "Low liquidity — no reliable price action"
+    # Sideways filter only blocks LOW/MEDIUM impact — HIGH/EXTREME news can break a sideways market
     if regime == "Sideways" and not tech.bb_squeeze:
-        return "Sideways market, no breakout setup"
+        if result.impact_strength not in ("EXTREME", "HIGH"):
+            return "Sideways market, no breakout setup"
 
     # News + Technical must not strongly contradict
     sent = result.sentiment_label
@@ -121,10 +122,18 @@ def generate_signal(result: ImpactResult) -> Optional[TradeSignal]:
             rationale=f"NO TRADE: {reject_reason}",
         )
 
-    # ── Compute ATR-like buffer from 52w range ─────────────────
-    range_52w  = pd.high_52w - pd.low_52w
-    buffer_pct = max(0.5, min(2.5, range_52w / pd.high_52w * 10))
-    buffer     = price * buffer_pct / 100
+    # ── Compute buffer so stop/target give achievable R:R ────────
+    # Prefer ATR from technicals; fall back to expected_move/4 so R:R ≥ 2
+    _tech_buf = result.price_data.technical if result.price_data else None
+    _atr_pct  = getattr(_tech_buf, "atr_pct", 0.0) if _tech_buf else 0.0
+    if _atr_pct and 0.2 <= _atr_pct <= 4.0:
+        buffer_pct = max(0.25, min(1.2, _atr_pct * 0.4))   # 40 % of daily ATR
+    elif abs(exp) > 0:
+        buffer_pct = max(0.25, min(1.2, abs(exp) / 4.0))   # stop = half expected move → R:R ≥ 2
+    else:
+        range_52w  = pd.high_52w - pd.low_52w
+        buffer_pct = max(0.25, min(1.2, range_52w / max(pd.high_52w, 1) * 4))
+    buffer = price * buffer_pct / 100
 
     # ── Entry zone ────────────────────────────────────────────
     if direction == "BUY":
@@ -254,26 +263,26 @@ def _confidence_score(
         elif direction == "SHORT" and tech.near_resistance:
             score += 10
 
-        # Trend confirms direction (+8 pts / -10 pts)
+        # Trend confirms direction (+8 pts / -6 pts)
         if (direction == "BUY"   and tech.trend == "Uptrend") or \
            (direction == "SHORT" and tech.trend == "Downtrend"):
             score += 8
         elif (direction == "BUY"   and tech.trend == "Downtrend") or \
              (direction == "SHORT" and tech.trend == "Uptrend"):
-            score -= 10
+            score -= 6
 
         # Bollinger Band squeeze — breakout imminent (+5 pts)
         if tech.bb_squeeze:
             score += 5
 
-        # MACD confirmation (+10 pts alignment, -10 pts contradiction)
+        # MACD confirmation (+10 pts alignment, -5 pts contradiction)
         _macd_line = getattr(tech, "macd_line", 0.0)
         _macd_bull = getattr(tech, "macd_bullish", False)
         if _macd_line != 0.0:
             if direction == "BUY"   and _macd_bull:       score += 10
-            elif direction == "BUY"   and not _macd_bull: score -= 10
+            elif direction == "BUY"   and not _macd_bull: score -= 5
             elif direction == "SHORT" and not _macd_bull: score += 10
-            elif direction == "SHORT" and _macd_bull:     score -= 10
+            elif direction == "SHORT" and _macd_bull:     score -= 5
 
         # Stochastic extremes (+8 pts)
         if direction == "BUY"   and getattr(tech, "stoch_oversold",  False): score += 8
@@ -284,14 +293,14 @@ def _confidence_score(
         if direction == "BUY"   and _obv == "Rising":  score += 5
         elif direction == "SHORT" and _obv == "Falling": score += 5
 
-        # EMA(9) price position (+5 pts alignment, -5 pts contradiction)
+        # EMA(9) price position (+5 pts alignment, -3 pts contradiction)
         _ema9 = getattr(tech, "ema_9", 0.0)
         _above = getattr(tech, "price_above_ema9", False)
         if _ema9 != 0.0:
             if direction == "BUY"   and _above:      score += 5
-            elif direction == "BUY"   and not _above: score -= 5
+            elif direction == "BUY"   and not _above: score -= 3
             elif direction == "SHORT" and not _above: score += 5
-            elif direction == "SHORT" and _above:     score -= 5
+            elif direction == "SHORT" and _above:     score -= 3
 
         # ADX trend strength (direction-agnostic — avoids double-scoring)
         _adx_val = getattr(tech, "adx_14", 0.0)
@@ -301,13 +310,13 @@ def _confidence_score(
         elif _adx_val > 0:
             score -= 3   # weak/choppy trend penalty
 
-        # SuperTrend (+12 aligned, -12 contradiction)
+        # SuperTrend (+12 aligned, -7 contradiction)
         _st = getattr(tech, "supertrend_bullish", None)
         if _st is not None:
             if direction == "BUY"   and _st:       score += 12
-            elif direction == "BUY"   and not _st: score -= 12
+            elif direction == "BUY"   and not _st: score -= 7
             elif direction == "SHORT" and not _st: score += 12
-            elif direction == "SHORT" and _st:     score -= 12
+            elif direction == "SHORT" and _st:     score -= 7
 
         # CCI extremes (+8 pts)
         if direction == "BUY"   and getattr(tech, "cci_oversold",   False): score += 8

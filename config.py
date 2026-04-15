@@ -66,8 +66,8 @@ UNDERREACTION = {
 }
 
 # ── Signal Engine Parameters ──────────────────────────────────
-RISK_REWARD_MIN  = 2.0
-CONFIDENCE_FLOOR = 55
+RISK_REWARD_MIN  = 1.5   # relaxed from 2.0 — news trades often have 1.5–2.0 R:R
+CONFIDENCE_FLOOR = 50    # relaxed from 55 — allows HIGH impact signals with mixed technicals
 
 # ══════════════════════════════════════════════════════════════
 #  NSE INDIA STOCK UNIVERSE

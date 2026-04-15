@@ -451,7 +451,7 @@ def _expected_move(
     base = HISTORICAL_REACTIONS.get(key, None)
     if base is None:
         base = sentiment.score * 5.0
-    dampener = {"Direct": 1.0, "Sectoral": 0.5, "Macro": 0.3}
+    dampener = {"Direct": 1.0, "Sectoral": 0.7, "Macro": 0.5}
     return round(base * dampener.get(match.relation, 0.5), 2)
 
 
