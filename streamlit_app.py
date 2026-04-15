@@ -1856,13 +1856,18 @@ with tab_history:
         )
 
     history = load_history()
-
-    # Auto-check outcomes for signals > 5 days old
     history, _outcomes_changed = check_and_update_outcomes(history)
     if _outcomes_changed:
         save_history(history)
 
-    # Flatten all HIGH/EXTREME BUY/SHORT signals into a single chronological list
+    # MCX symbol set for correct price routing
+    _MPHR_MCX = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD","GOLD","SILVER"}
+
+    def _mphr_price(sym: str) -> float:
+        """Get live price routing MCX symbols to their fetcher."""
+        return _mcx_live_price(sym) if sym in _MPHR_MCX else _mphr_live_price(sym)
+
+    # Flatten all HIGH/EXTREME signals into a chronological list
     _all_preds: list[dict] = []
     for _entry in history:
         _rt = _entry.get("run_time", "")
@@ -1875,42 +1880,72 @@ with tab_history:
 
     _all_preds.sort(key=lambda x: x["_run_time"], reverse=True)
 
-    # ── Stats header ─────────────────────────────────────────
+    # ── Stats ──────────────────────────────────────────────────
     _verified = [p for p in _all_preds if p.get("outcome")]
     _wins     = [p for p in _verified if p.get("outcome") == "WIN"]
     _win_rate = round(len(_wins) / len(_verified) * 100, 1) if _verified else 0.0
-    _avg_ret  = round(
-        sum(p.get("outcome_return_pct") or 0 for p in _verified) / len(_verified), 2
-    ) if _verified else 0.0
+    _avg_ret  = round(sum(p.get("outcome_return_pct") or 0 for p in _verified) / len(_verified), 2) if _verified else 0.0
 
-    _30d_start = (datetime.now(timezone.utc) - timedelta(days=30))
-    _30d_end   = datetime.now(timezone.utc)
-    _win_col   = "#00ff88" if _win_rate >= 55 else ("#ffaa33" if _win_rate >= 40 else "#ff4455")
-    _ret_col   = "#00ff88" if _avg_ret >= 0 else "#ff4455"
+    # Hypothetical: if you took every BUY/SHORT at signal price → current
+    _hypo_returns: list[float] = []
+    for _hx in _all_preds:
+        if _hx.get("action") not in ("BUY", "SHORT"):
+            continue
+        _hep = float(_hx.get("prediction_price") or 0)
+        if _hep <= 0:
+            _hlo, _hhi = float(_hx.get("entry_low") or 0), float(_hx.get("entry_high") or 0)
+            if _hlo > 0 and _hhi > 0:
+                _hep = (_hlo + _hhi) / 2
+        if _hep <= 0:
+            continue
+        _hcp = _mphr_price(_hx.get("symbol", ""))
+        if _hcp <= 0:
+            continue
+        _hpnl = (_hcp - _hep) / _hep * 100 if _hx["action"] == "BUY" else (_hep - _hcp) / _hep * 100
+        _hypo_returns.append(_hpnl)
 
+    _hypo_avg  = round(sum(_hypo_returns) / len(_hypo_returns), 2) if _hypo_returns else None
+    _hypo_wins = sum(1 for x in _hypo_returns if x > 0)
+
+    _win_col  = "#00ff88" if _win_rate >= 55 else ("#ffaa33" if _win_rate >= 40 else "#ff4455")
+    _ret_col  = "#00ff88" if _avg_ret  >= 0 else "#ff4455"
+    _hypo_col = "#00ff88" if (_hypo_avg or 0) >= 0 else "#ff4455"
+
+    _hypo_cell = ""
+    if _hypo_avg is not None:
+        _hypo_cell = (
+            f'<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+            f'<div style="color:#6b7280;font-size:10px;text-transform:uppercase">If Taken Avg</div>'
+            f'<div style="font-size:22px;font-weight:700;color:{_hypo_col}">{_hypo_avg:+.2f}%</div>'
+            f'<div style="font-size:10px;color:#4a5568">{_hypo_wins}/{len(_hypo_returns)} profitable</div>'
+            f'</div>'
+        )
+
+    _ncols = 5 + (1 if _hypo_avg is not None else 0)
     st.markdown(
         f'<div class="card">'
-        f'<div class="card-title">📊 MPHR — Market Prediction History &amp; Results</div>'
+        f'<div class="card-title">📊 MPHR — Signal Tracker &amp; Trade Simulator</div>'
         f'<div style="color:#6b7280;font-size:12px;margin-bottom:12px">'
-        f'30-day window: {_30d_start.strftime("%d %b")} – {_30d_end.strftime("%d %b %Y")} IST'
-        f' &nbsp;·&nbsp; <b>HIGH</b> &amp; <b>EXTREME</b> impact signals tracked (BUY / SHORT / NO TRADE)'
+        f'See what each signal would have returned if you had taken the trade &nbsp;·&nbsp;'
+        f'<b>HIGH</b> &amp; <b>EXTREME</b> impact · BUY / SHORT / NO TRADE'
         f'</div>'
-        f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px">'
-        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
-        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Total</div>'
-        f'    <div style="font-size:22px;font-weight:700">{len(_all_preds)}</div></div>'
-        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
-        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Verified</div>'
-        f'    <div style="font-size:22px;font-weight:700">{len(_verified)}</div></div>'
-        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
-        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Wins</div>'
-        f'    <div style="font-size:22px;font-weight:700;color:#00ff88">{len(_wins)}</div></div>'
-        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
-        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Win Rate</div>'
-        f'    <div style="font-size:22px;font-weight:700;color:{_win_col}">{_win_rate:.1f}%</div></div>'
-        f'  <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
-        f'    <div style="color:#6b7280;font-size:10px;text-transform:uppercase">Avg Return</div>'
-        f'    <div style="font-size:22px;font-weight:700;color:{_ret_col}">{_avg_ret:+.2f}%</div></div>'
+        f'<div style="display:grid;grid-template-columns:repeat({_ncols},1fr);gap:12px;margin-bottom:16px">'
+        f'<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'<div style="color:#6b7280;font-size:10px;text-transform:uppercase">Total Signals</div>'
+        f'<div style="font-size:22px;font-weight:700">{len(_all_preds)}</div></div>'
+        f'<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'<div style="color:#6b7280;font-size:10px;text-transform:uppercase">Verified</div>'
+        f'<div style="font-size:22px;font-weight:700">{len(_verified)}</div></div>'
+        f'<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'<div style="color:#6b7280;font-size:10px;text-transform:uppercase">Wins</div>'
+        f'<div style="font-size:22px;font-weight:700;color:#00ff88">{len(_wins)}</div></div>'
+        f'<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'<div style="color:#6b7280;font-size:10px;text-transform:uppercase">Win Rate</div>'
+        f'<div style="font-size:22px;font-weight:700;color:{_win_col}">{_win_rate:.1f}%</div></div>'
+        f'<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">'
+        f'<div style="color:#6b7280;font-size:10px;text-transform:uppercase">Verified Avg</div>'
+        f'<div style="font-size:22px;font-weight:700;color:{_ret_col}">{_avg_ret:+.2f}%</div></div>'
+        + _hypo_cell +
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -1918,129 +1953,251 @@ with tab_history:
     if not _all_preds:
         st.info(
             "No HIGH/EXTREME impact signals yet. Signals are archived every time you click "
-            "**Run Analysis** and at scheduled slots: **09:15**, **13:00**, **15:20**, **17:30**, **21:00 IST**."
+            "**Run Analysis** and at scheduled slots: 09:15, 13:00, 15:20, 17:30, 21:00 IST."
         )
     else:
         # ── Filters ──────────────────────────────────────────
-        _fc1, _fc2 = st.columns([2, 2])
+        _fc1, _fc2, _fc3 = st.columns([2, 2, 2])
         with _fc1:
-            _imp_filter = st.multiselect(
-                "Impact", ["EXTREME", "HIGH"], default=["EXTREME", "HIGH"], key="mphr_imp"
-            )
+            _imp_filter = st.multiselect("Impact", ["EXTREME", "HIGH"], default=["EXTREME", "HIGH"], key="mphr_imp")
         with _fc2:
-            _act_filter = st.multiselect(
-                "Action", ["BUY", "SHORT", "NO TRADE"], default=["BUY", "SHORT", "NO TRADE"], key="mphr_act"
-            )
+            _act_filter = st.multiselect("Action", ["BUY", "SHORT", "NO TRADE"], default=["BUY", "SHORT", "NO TRADE"], key="mphr_act")
+        with _fc3:
+            _res_filter = st.multiselect("Result", ["Profitable", "Loss", "Pending"], default=["Profitable", "Loss", "Pending"], key="mphr_res")
 
         _filtered = [
             p for p in _all_preds
-            if p.get("impact_strength") in _imp_filter
-            and p.get("action") in _act_filter
+            if p.get("impact_strength") in _imp_filter and p.get("action") in _act_filter
         ]
 
-        # ── Prediction rows ───────────────────────────────────
-        _outcome_badge = {
+        # ── Signal cards ──────────────────────────────────────
+        _oc_badge_map = {
             "WIN":        '<span style="background:#0a2a14;border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">WIN</span>',
             "LOSS":       '<span style="background:#2a0a0a;border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">LOSS</span>',
             "BREAK-EVEN": '<span style="background:#1a1200;border:1px solid #ffaa33;color:#ffaa33;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">BREAK-EVEN</span>',
         }
-        _pending_badge = '<span style="background:rgba(255,255,255,0.05);border:1px solid #555;color:#888;padding:2px 8px;border-radius:4px;font-size:11px">PENDING</span>'
+        _pending_badge_html = '<span style="background:rgba(255,255,255,0.05);border:1px solid #555;color:#888;padding:2px 8px;border-radius:4px;font-size:11px">PENDING</span>'
 
         for _p in _filtered:
-            _rt_str  = _p.get("_run_time", "")
-            _rt_utc  = datetime.fromisoformat(_rt_str) if _rt_str else datetime.now(timezone.utc)
+            _rt_str = _p.get("_run_time", "")
+            _rt_utc = datetime.fromisoformat(_rt_str) if _rt_str else datetime.now(timezone.utc)
             if _rt_utc.tzinfo is None:
                 _rt_utc = _rt_utc.replace(tzinfo=timezone.utc)
-            _rt_ist  = _rt_utc + timedelta(hours=5, minutes=30)
-            _ts      = _rt_ist.strftime("%d %b %H:%M IST")
+            _rt_ist = _rt_utc + timedelta(hours=5, minutes=30)
+            _ts     = _rt_ist.strftime("%d %b %H:%M IST")
 
-            _act  = _p.get("action", "")
-            if _act == "BUY":
-                _act_badge = '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">BUY</span>'
-            elif _act == "SHORT":
-                _act_badge = '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">SHORT</span>'
+            # Human-readable "X ago"
+            _dm = int((datetime.now(timezone.utc) - _rt_utc).total_seconds() / 60)
+            if _dm < 60:
+                _ago = f"{_dm}m ago"
+            elif _dm < 1440:
+                _ago = f"{_dm//60}h {_dm%60}m ago"
             else:
-                _act_badge = '<span style="background:rgba(255,255,255,0.04);border:1px solid #555;color:#888;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">NO TRADE</span>'
+                _ago = f"{_dm//1440}d {(_dm%1440)//60}h ago"
 
-            _imp  = _p.get("impact_strength", "")
-            _imp_colors = {"EXTREME": "#ff4455", "HIGH": "#ffaa33", "MEDIUM": "#00d4ff", "LOW": "#6b7280"}
-            _imp_col = _imp_colors.get(_imp, "#6b7280")
-            _imp_badge = (
-                f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_imp_col};'
-                f'color:{_imp_col};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">{_imp}</span>'
-            )
+            _act    = _p.get("action", "")
+            _imp    = _p.get("impact_strength", "")
+            _sym    = _p.get("symbol", "")
+            _name   = _p.get("name", _sym)
+            _sector = _p.get("sector", "")
 
-            _oc = _p.get("outcome")
-            _ret_pct = _p.get("outcome_return_pct")
-            if _act == "NO TRADE":
-                _oc_badge = '<span style="background:rgba(255,255,255,0.03);border:1px solid #444;color:#666;padding:2px 8px;border-radius:4px;font-size:11px">N/A</span>'
-                _ret_str  = ""
-            else:
-                _oc_badge = _outcome_badge.get(_oc, _pending_badge)
-                _ret_str  = f' <span style="color:{"#00ff88" if (_ret_pct or 0) >= 0 else "#ff4455"};font-size:11px">{_ret_pct:+.2f}%</span>' if _ret_pct is not None else ""
+            _pred_px  = float(_p.get("prediction_price") or 0)
+            _entry_lo = float(_p.get("entry_low")  or 0)
+            _entry_hi = float(_p.get("entry_high") or 0)
+            _stop_px  = float(_p.get("stop_loss")  or 0)
+            _tgt1     = float(_p.get("target1")    or 0)
+            _tgt2     = float(_p.get("target2")    or 0)
+            _exp_pct  = float(_p.get("expected_move_pct") or 0)
 
-            _pred_px = _p.get("prediction_price", 0)
-            _entry_lo = _p.get("entry_low", 0)
-            _entry_hi = _p.get("entry_high", 0)
-            _stop_px  = _p.get("stop_loss", 0)
-            _tgt1     = _p.get("target1", 0)
-            _tgt2     = _p.get("target2", 0)
-            _sector   = _p.get("sector", "")
-            _sym      = _p.get("symbol", "")
-            _name     = _p.get("name", _sym)
+            # Best entry price for P&L calc
+            _entry_px = _pred_px
+            if _entry_px <= 0 and _entry_lo > 0 and _entry_hi > 0:
+                _entry_px = (_entry_lo + _entry_hi) / 2.0
+            elif _entry_px <= 0 and _entry_lo > 0:
+                _entry_px = _entry_lo
 
-            # Entry range string
-            if _entry_lo > 0 and _entry_hi > 0 and _entry_lo != _entry_hi:
+            # Entry display string
+            if _entry_lo > 0 and _entry_hi > 0 and abs(_entry_lo - _entry_hi) > 0.01:
                 _entry_str = f"₹{_entry_lo:,.2f}–{_entry_hi:,.2f}"
-            elif _pred_px > 0:
-                _entry_str = f"₹{_pred_px:,.2f}"
+            elif _entry_px > 0:
+                _entry_str = f"₹{_entry_px:,.2f}"
             else:
                 _entry_str = "—"
 
-            _stop_str = f"₹{_stop_px:,.2f}" if _stop_px > 0 else "—"
-            # For BUY/SHORT: show target levels; for NO TRADE: show expected-move reference
+            # Target display string
             if _tgt1 > 0:
-                _tgt_str = f"₹{_tgt1:,.2f} / ₹{_tgt2:,.2f}"
-            elif _pred_px > 0 and _p.get("expected_move_pct"):
-                _exp     = float(_p.get("expected_move_pct", 0.0))
-                _ref_px  = _pred_px * (1 + _exp / 100)
-                _tgt_str = f"~₹{_ref_px:,.2f} ({_exp:+.1f}% exp)"
+                _tgt_str = f"₹{_tgt1:,.2f}" + (f" / ₹{_tgt2:,.2f}" if _tgt2 > 0 else "")
+            elif _entry_px > 0 and _exp_pct:
+                _ref_px  = _entry_px * (1 + _exp_pct / 100)
+                _tgt_str = f"~₹{_ref_px:,.2f} ({_exp_pct:+.1f}%)"
             else:
                 _tgt_str = "—"
-            _entry_label = "Price at Signal" if _act == "NO TRADE" else "Entry"
 
-            # Current live price — always fetch for all symbols
-            _cur_px  = _mphr_live_price(_sym)
+            _stop_str = f"₹{_stop_px:,.2f}" if _stop_px > 0 else "—"
+
+            # Live price
+            _cur_px  = _mphr_price(_sym)
             _cur_str = f"₹{_cur_px:,.2f}" if _cur_px > 0 else "—"
 
-            # Open P&L only for unresolved BUY/SHORT with a known entry price
-            _pnl_str = ""
-            if _act in ("BUY", "SHORT") and not _p.get("outcome") and _pred_px > 0 and _cur_px > 0:
-                _pnl_pct = (_cur_px - _pred_px) / _pred_px * 100
-                if _act == "SHORT":
-                    _pnl_pct = -_pnl_pct
-                _pnl_col = "#00ff88" if _pnl_pct >= 0 else "#ff4455"
-                _pnl_str = f'<span style="color:{_pnl_col};font-weight:700">{_pnl_pct:+.2f}%</span>'
+            # Price change from signal → now
+            _chg_html = ""
+            if _entry_px > 0 and _cur_px > 0:
+                _raw_chg = _cur_px - _entry_px
+                _raw_pct = _raw_chg / _entry_px * 100
+                _cc      = "#00ff88" if _raw_pct >= 0 else "#ff4455"
+                _arrow   = "▲" if _raw_pct >= 0 else "▼"
+                _rgb     = "0,255,136" if _raw_pct >= 0 else "255,68,85"
+                _chg_html = (
+                    f'<div style="background:rgba({_rgb},0.1);color:{_cc};'
+                    f'padding:4px 10px;border-radius:6px;font-size:13px;font-weight:700;white-space:nowrap">'
+                    f'{_arrow} {abs(_raw_pct):.2f}% (₹{_raw_chg:+,.2f})</div>'
+                )
+
+            # IF TAKEN P&L
+            _if_pct: float | None = None
+            _if_amt: float | None = None
+            if _entry_px > 0 and _cur_px > 0:
+                if _act == "BUY":
+                    _if_pct = (_cur_px - _entry_px) / _entry_px * 100
+                    _if_amt = _cur_px - _entry_px
+                elif _act == "SHORT":
+                    _if_pct = (_entry_px - _cur_px) / _entry_px * 100
+                    _if_amt = _entry_px - _cur_px
+                else:  # NO TRADE — show hypothetical BUY
+                    _if_pct = (_cur_px - _entry_px) / _entry_px * 100
+                    _if_amt = _cur_px - _entry_px
+
+            # Result filter
+            if _if_pct is not None and _if_pct > 0  and "Profitable" not in _res_filter:
+                continue
+            if _if_pct is not None and _if_pct <= 0 and "Loss"       not in _res_filter:
+                continue
+            if _if_pct is None                       and "Pending"    not in _res_filter:
+                continue
+
+            # Progress bar toward target (BUY/SHORT only)
+            _prog_html = ""
+            if _if_pct is not None and _tgt1 > 0 and _entry_px > 0 and _act in ("BUY", "SHORT"):
+                if _act == "BUY" and _tgt1 > _entry_px:
+                    _prog = min(100, max(0, (_cur_px - _entry_px) / (_tgt1 - _entry_px) * 100))
+                    _prog_col = "#00ff88"
+                elif _act == "SHORT" and _tgt1 < _entry_px:
+                    _prog = min(100, max(0, (_entry_px - _cur_px) / (_entry_px - _tgt1) * 100))
+                    _prog_col = "#ff4455"
+                else:
+                    _prog, _prog_col = 0, "#555"
+                _prog_html = (
+                    f'<div style="margin-top:8px">'
+                    f'<div style="font-size:10px;color:#4a5568;margin-bottom:3px">To target: {_prog:.0f}%</div>'
+                    f'<div style="background:#1a2035;border-radius:3px;height:5px">'
+                    f'<div style="background:{_prog_col};height:5px;width:{_prog:.0f}%;border-radius:3px"></div>'
+                    f'</div></div>'
+                )
+
+            # IF TAKEN box: bg/border/color/label/note
+            if _if_pct is None:
+                _ib_bg, _ib_bdr, _ip_col = "rgba(255,255,255,0.03)", "#2a2a3a", "#555"
+                _if_label, _if_note = "No Data", "Price unavailable"
+                _if_pct_str, _if_amt_str = "—", ""
+            elif _act == "NO TRADE":
+                if _if_pct < 0:
+                    _ib_bg, _ib_bdr, _ip_col = "rgba(0,255,136,0.06)", "rgba(0,255,136,0.3)", "#00ff88"
+                    _if_label, _if_note = "Advice Correct", "Market dropped — good call"
+                else:
+                    _ib_bg, _ib_bdr, _ip_col = "rgba(255,170,51,0.06)", "rgba(255,170,51,0.3)", "#ffaa33"
+                    _if_label, _if_note = "Missed Move", "Market rose despite risk"
+                _if_pct_str = f"{_if_pct:+.2f}%"
+                _if_amt_str = f"₹{abs(_if_amt):,.2f}/sh hypothetical" if _if_amt is not None else ""
+            else:
+                if _if_pct > 0:
+                    _ib_bg, _ib_bdr, _ip_col = "rgba(0,255,136,0.07)", "rgba(0,255,136,0.35)", "#00ff88"
+                    _if_label, _if_note = "In Profit", "Holding above entry"
+                elif _if_pct < -0.5:
+                    _ib_bg, _ib_bdr, _ip_col = "rgba(255,68,85,0.07)", "rgba(255,68,85,0.35)", "#ff4455"
+                    _if_label, _if_note = "In Loss", "Below entry price"
+                else:
+                    _ib_bg, _ib_bdr, _ip_col = "rgba(255,255,255,0.04)", "#3a3a4a", "#888"
+                    _if_label, _if_note = "Flat", "Near entry price"
+                _if_pct_str = f"{_if_pct:+.2f}%"
+                _if_amt_str = f"₹{abs(_if_amt):,.2f}/share" if _if_amt is not None else ""
+
+            # Action badge
+            if _act == "BUY":
+                _act_badge = '<span style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700">BUY</span>'
+                _if_title  = "If You Bought"
+            elif _act == "SHORT":
+                _act_badge = '<span style="background:rgba(255,68,85,0.1);border:1px solid #ff4455;color:#ff4455;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700">SHORT</span>'
+                _if_title  = "If You Shorted"
+            else:
+                _act_badge = '<span style="background:rgba(255,255,255,0.04);border:1px solid #555;color:#888;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700">NO TRADE</span>'
+                _if_title  = "If Bought Anyway"
+
+            # Impact badge
+            _imp_col = {"EXTREME": "#ff4455", "HIGH": "#ffaa33"}.get(_imp, "#6b7280")
+            _imp_badge = (
+                f'<span style="background:rgba(255,255,255,0.04);border:1px solid {_imp_col};'
+                f'color:{_imp_col};padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700">{_imp}</span>'
+            )
+
+            # Outcome badge (for BUY/SHORT)
+            if _act == "NO TRADE":
+                _oc_html = '<span style="background:rgba(255,255,255,0.03);border:1px solid #444;color:#666;padding:2px 8px;border-radius:4px;font-size:11px">N/A</span>'
+            else:
+                _oc      = _p.get("outcome")
+                _ret_pct = _p.get("outcome_return_pct")
+                _oc_html = _oc_badge_map.get(_oc, _pending_badge_html)
+                if _ret_pct is not None:
+                    _rc = "#00ff88" if _ret_pct >= 0 else "#ff4455"
+                    _oc_html += f' <span style="color:{_rc};font-size:11px;font-weight:700">{_ret_pct:+.2f}%</span>'
 
             st.markdown(
-                f'<div style="padding:8px 12px;border-bottom:1px solid #1a1f3a;font-size:13px">'
-                # Row 1: timestamp + symbol + badges + outcome
-                f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-                f'  <span style="color:#6b7280;font-size:11px;min-width:115px">{_ts}</span>'
-                f'  <span style="font-weight:700;min-width:80px">{_sym}</span>'
-                f'  <span style="color:#a8b0d0;font-size:11px">{_name[:22]}</span>'
-                f'  {_act_badge} {_imp_badge}'
-                f'  <span style="color:#6b7280;font-size:11px">{_sector}</span>'
-                f'  {_oc_badge}{_ret_str}'
+                # Card wrapper
+                f'<div style="background:#0d111e;border:1px solid #1a2035;border-radius:12px;padding:16px;margin-bottom:10px">'
+                # ── Header: symbol + timestamp ──
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">'
+                f'  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+                f'    <span style="font-size:17px;font-weight:700;color:#fff">{_sym}</span>'
+                f'    <span style="font-size:13px;color:#8892b0">{_name[:28]}</span>'
+                f'    <span style="background:#1e293b;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px">{_sector}</span>'
+                f'  </div>'
+                f'  <div style="text-align:right;flex-shrink:0;margin-left:12px">'
+                f'    <div style="font-size:11px;color:#6b7280">{_ts}</div>'
+                f'    <div style="font-size:11px;color:#4a5568">{_ago}</div>'
+                f'  </div>'
                 f'</div>'
-                # Row 2: price details
-                f'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;font-size:11px;color:#6b7280">'
-                f'  <span>{_entry_label} <b style="color:#ffd700">{_entry_str}</b></span>'
-                f'  <span>Stop <b style="color:#ff4455">{_stop_str}</b></span>'
-                f'  <span>Suggested Exit <b style="color:#00ff88">{_tgt_str}</b></span>'
-                f'  <span>Current <b style="color:#00d4ff">{_cur_str}</b></span>'
-                + (f'  <span>Open P&amp;L {_pnl_str}</span>' if _pnl_str else "")
-                + f'</div>'
+                # ── Badges: action + impact + outcome ──
+                f'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">'
+                f'  {_act_badge} {_imp_badge}'
+                f'  <span style="margin-left:4px">{_oc_html}</span>'
+                f'</div>'
+                # ── Body: price journey (left) + IF TAKEN box (right) ──
+                f'<div style="display:grid;grid-template-columns:1fr 195px;gap:16px;align-items:start">'
+                # Left col: price journey
+                f'  <div>'
+                f'    <div style="font-size:10px;color:#4a5568;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Price Journey</div>'
+                f'    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+                f'      <div><div style="font-size:10px;color:#6b7280;margin-bottom:2px">Signal Price</div>'
+                f'           <div style="font-size:16px;font-weight:700;color:#ffd700">{_entry_str}</div></div>'
+                f'      <div style="color:#4a5568;font-size:20px">→</div>'
+                f'      <div><div style="font-size:10px;color:#6b7280;margin-bottom:2px">Now</div>'
+                f'           <div style="font-size:16px;font-weight:700;color:#00d4ff">{_cur_str}</div></div>'
+                + (_chg_html or "")
+                + f'    </div>'
+                f'    <div style="margin-top:10px;display:flex;gap:20px;font-size:11px;color:#6b7280;flex-wrap:wrap">'
+                f'      <span>Stop: <b style="color:#ff4455">{_stop_str}</b></span>'
+                f'      <span>Target: <b style="color:#00ff88">{_tgt_str}</b></span>'
+                f'    </div>'
+                + _prog_html
+                + f'  </div>'
+                # Right col: IF TAKEN result box
+                + f'  <div style="background:{_ib_bg};border:1px solid {_ib_bdr};border-radius:10px;padding:14px;text-align:center">'
+                f'    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">{_if_title}</div>'
+                f'    <div style="font-size:30px;font-weight:700;color:{_ip_col};line-height:1.1">{_if_pct_str}</div>'
+                + (f'    <div style="font-size:11px;color:#6b7280;margin-top:4px">{_if_amt_str}</div>' if _if_amt_str else "")
+                + f'    <div style="font-size:10px;color:{_ip_col};opacity:0.7;margin-top:6px">{_if_label}</div>'
+                f'    <div style="font-size:10px;color:#4a5568;margin-top:3px;font-style:italic">{_if_note}</div>'
+                f'  </div>'
+                f'</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
