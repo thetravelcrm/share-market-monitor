@@ -2101,11 +2101,13 @@ with tab_history:
                 _if_pct_str, _if_amt_str = "—", ""
             elif _act == "NO TRADE":
                 if _if_pct < 0:
-                    _ib_bg, _ib_bdr, _ip_col = "rgba(0,255,136,0.06)", "rgba(0,255,136,0.3)", "#00ff88"
+                    _ib_bg, _ib_bdr = "rgba(0,255,136,0.06)", "rgba(0,255,136,0.3)"
                     _if_label, _if_note = "Advice Correct", "Market dropped — good call"
                 else:
-                    _ib_bg, _ib_bdr, _ip_col = "rgba(255,170,51,0.06)", "rgba(255,170,51,0.3)", "#ffaa33"
+                    _ib_bg, _ib_bdr = "rgba(255,170,51,0.06)", "rgba(255,170,51,0.3)"
                     _if_label, _if_note = "Missed Move", "Market rose despite risk"
+                # % color always reflects actual market direction (not advice quality)
+                _ip_col = "#ff4455" if _if_pct < 0 else "#00ff88"
                 _if_pct_str = f"{_if_pct:+.2f}%"
                 _if_amt_str = f"₹{abs(_if_amt):,.2f}/sh hypothetical" if _if_amt is not None else ""
             else:
