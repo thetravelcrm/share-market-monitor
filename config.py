@@ -30,6 +30,9 @@ NEWS_FEEDS = {
     "NDTV Profit":               "https://feeds.feedburner.com/NdtvProfit-LatestNews",
     "Hindu Business Line":       "https://www.thehindubusinessline.com/markets/stock-markets/?service=rss",
     "Zee Business":              "https://zeebiz.com/markets/rss",
+    "RBI Press Releases":        "https://www.rbi.org.in/Scripts/rss.aspx",
+    "PIB Finance Ministry":      "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
+    "PIB Economy":               "https://pib.gov.in/RssMain.aspx?ModId=12&Lang=1&Regid=3",
     # ── Global macro (impact on Indian market) ───────────────
     "Reuters Business":          "https://feeds.reuters.com/reuters/businessNews",
     "Reuters Markets":           "https://feeds.reuters.com/reuters/UKmarkets",

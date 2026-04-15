@@ -50,6 +50,60 @@ def _clean_html(text: str) -> str:
         return re.sub(r"<[^>]+>", " ", text)
 
 
+import logging
+logger = logging.getLogger(__name__)
+
+
+def fetch_tradingview_economics_news(hours_back: int = 12, limit: int = 50) -> list[NewsItem]:
+    """Fetch Trading Economics news from TradingView's internal headlines API."""
+    url = (
+        "https://news-headlines.tradingview.com/headlines/"
+        f"?provider=trading-economics&lang=en&limit={limit}"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; FinNewsBot/1.0)",
+        "Accept": "application/json",
+        "Referer": "https://in.tradingview.com/",
+    }
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours_back)
+    items: list[NewsItem] = []
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        # API returns a plain list of headline objects
+        stories = data if isinstance(data, list) else data.get("items", [])
+
+        for story in stories:
+            pub_ts = story.get("published", 0)
+            pub_dt = (
+                datetime.fromtimestamp(pub_ts, tz=timezone.utc)
+                if pub_ts else datetime.now(tz=timezone.utc)
+            )
+            if pub_dt < cutoff:
+                continue
+
+            title   = (story.get("title", "") or "").strip()
+            summary = (story.get("shortDescription", "") or story.get("description", "") or "").strip()
+            link    = story.get("link", "") or story.get("storyPath", "")
+            if not title:
+                continue
+
+            items.append(NewsItem(
+                title=title,
+                summary=summary[:600],
+                source="TradingView - Trading Economics",
+                url=link,
+                published=pub_dt,
+            ))
+
+    except Exception as exc:
+        logger.warning("TradingView Economics fetch failed: %s", exc)
+
+    return items
+
+
 def fetch_all_feeds(hours_back: int = 12, max_per_feed: int = 20) -> list[NewsItem]:
     """
     Fetch articles from all configured RSS feeds published within
@@ -94,6 +148,11 @@ def fetch_all_feeds(hours_back: int = 12, max_per_feed: int = 20) -> list[NewsIt
             print(f"  [WARN] Feed '{source_name}' failed: {exc}")
 
         time.sleep(0.3)   # polite crawl delay
+
+    # Trading Economics via TradingView internal API (no RSS available)
+    te_items = fetch_tradingview_economics_news(hours_back=hours_back, limit=max_per_feed)
+    all_items.extend(te_items)
+    logger.info("TradingView Economics: %d articles", len(te_items))
 
     # Sort newest first
     all_items.sort(key=lambda x: x.published, reverse=True)
