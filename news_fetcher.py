@@ -1,9 +1,10 @@
 # ─────────────────────────────────────────────────────────────
-#  news_fetcher.py  –  Fetch and parse RSS feeds
+#  news_fetcher.py  –  Fetch and parse RSS feeds + API sources
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
 import feedparser
+import logging
 import requests
 from datetime import datetime, timezone, timedelta
 from dateutil import parser as dateparser
@@ -12,6 +13,8 @@ from typing import Optional
 import time
 
 from config import NEWS_FEEDS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,11 +53,7 @@ def _clean_html(text: str) -> str:
         return re.sub(r"<[^>]+>", " ", text)
 
 
-import logging
-logger = logging.getLogger(__name__)
-
-
-def fetch_tradingview_economics_news(hours_back: int = 12, limit: int = 50) -> list[NewsItem]:
+def fetch_tradingview_economics_news(hours_back: int = 12, limit: int = 20) -> list[NewsItem]:
     """Fetch Trading Economics news from TradingView's internal headlines API."""
     url = (
         "https://news-headlines.tradingview.com/headlines/"
@@ -87,6 +86,9 @@ def fetch_tradingview_economics_news(hours_back: int = 12, limit: int = 50) -> l
             title   = (story.get("title", "") or "").strip()
             summary = (story.get("shortDescription", "") or story.get("description", "") or "").strip()
             link    = story.get("link", "") or story.get("storyPath", "")
+            # Normalize relative storyPath URLs
+            if link and link.startswith("/"):
+                link = f"https://in.tradingview.com{link}"
             if not title:
                 continue
 
@@ -106,8 +108,8 @@ def fetch_tradingview_economics_news(hours_back: int = 12, limit: int = 50) -> l
 
 def fetch_all_feeds(hours_back: int = 12, max_per_feed: int = 20) -> list[NewsItem]:
     """
-    Fetch articles from all configured RSS feeds published within
-    the last `hours_back` hours.
+    Fetch articles from all configured RSS feeds and the TradingView Economics
+    API, published within the last `hours_back` hours.
     """
     cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours_back)
     all_items: list[NewsItem] = []
@@ -145,13 +147,18 @@ def fetch_all_feeds(hours_back: int = 12, max_per_feed: int = 20) -> list[NewsIt
 
         except Exception as exc:
             # Silently skip feeds that fail; don't crash the system
-            print(f"  [WARN] Feed '{source_name}' failed: {exc}")
+            logger.warning("Feed '%s' failed: %s", source_name, exc)
 
         time.sleep(0.3)   # polite crawl delay
 
     # Trading Economics via TradingView internal API (no RSS available)
     te_items = fetch_tradingview_economics_news(hours_back=hours_back, limit=max_per_feed)
-    all_items.extend(te_items)
+    for item in te_items:
+        if item.url and item.url in seen_urls:
+            continue
+        if item.url:
+            seen_urls.add(item.url)
+        all_items.append(item)
     logger.info("TradingView Economics: %d articles", len(te_items))
 
     # Sort newest first
