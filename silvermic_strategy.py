@@ -386,7 +386,8 @@ def run_backtest(
 
             if hit_stop:
                 position.exit_time = bar_ts
-                position.exit_price = ladder["final_stop"]
+                # process_orders_on_close=true: fill at bar close (min of close and stop)
+                position.exit_price = min(c, ladder["final_stop"])
                 position.exit_reason = "Stop: " + ladder["level"]
                 position.pnl_rs = (position.exit_price - position.entry_price) * LOT_SIZE
                 trades.append(position)
