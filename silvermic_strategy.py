@@ -48,7 +48,7 @@ BIG_TRIGGER     = 11000.0
 BIG_PROFIT      = 10000.0
 
 FLAT_HOUR       = 23
-FLAT_MINUTE     = 35                # 23:35 IST
+FLAT_MINUTE     = 25                # MCX normal session closes 23:30 IST; bar opens 23:15 closes 23:30
 
 
 # ─────────────────────────────────────────────────────────────
