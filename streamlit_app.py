@@ -2377,9 +2377,10 @@ with tab_silvermic:
                         # Trade log
                         if _bt_trades:
                             _log_rows = []
+                            from silvermic_strategy import IST_OFFSET as _IST_OFFSET
                             for _t in _bt_trades:
-                                _ist_entry = _t.entry_time + IST_OFFSET if _t.entry_time else None
-                                _ist_exit  = _t.exit_time  + IST_OFFSET if _t.exit_time  else None
+                                _ist_entry = _t.entry_time + _IST_OFFSET if _t.entry_time else None
+                                _ist_exit  = _t.exit_time  + _IST_OFFSET if _t.exit_time  else None
                                 _log_rows.append({
                                     "Entry (IST)":  _ist_entry.strftime("%d-%b %H:%M") if _ist_entry else "",
                                     "Exit (IST)":   _ist_exit.strftime("%d-%b %H:%M")  if _ist_exit  else "",

@@ -301,13 +301,15 @@ def run_backtest(df_15m: pd.DataFrame, df_1h: pd.DataFrame,
                                   rsi_len, ema_spread_min, rsi_entry_min)
 
         c   = float(bar["Close"].iloc[-1])
+        low = float(bar["Low"].iloc[-1])
         atr = entry["atr"]
         ist = bar_ts + IST_OFFSET
         eod = ist.hour > flat_hour or (ist.hour == flat_hour and ist.minute >= flat_min)
 
         if position is not None:
             ladder   = _exit_ladder(position.entry_price, c, atr)
-            hit_stop = c <= ladder["final_stop"]
+            # Use bar Low for stop check (mirrors TradingView bar-by-bar fill)
+            hit_stop = low <= ladder["final_stop"]
             if hit_stop:
                 position.exit_time   = bar_ts
                 position.exit_price  = ladder["final_stop"]
@@ -315,7 +317,8 @@ def run_backtest(df_15m: pd.DataFrame, df_1h: pd.DataFrame,
                 position.pnl_rs      = (position.exit_price - position.entry_price) * LOT_SIZE
                 trades.append(position)
                 position = None
-            elif eod and ladder["profit_rs"] >= eod_min_profit:
+            elif eod:
+                # Close ALL positions at EOD (mirrors TradingView strategy.close_all)
                 position.exit_time   = bar_ts
                 position.exit_price  = c
                 position.exit_reason = "EOD square-off"
