@@ -368,7 +368,6 @@ def run_backtest(
         entry = _entry_conditions(bar, htf["htf_bull"])
 
         c   = float(bar["Close"].iloc[-1])
-        low = float(bar["Low"].iloc[-1])
         atr = entry["atr"]
 
         # IST time for EOD check.
@@ -382,7 +381,8 @@ def run_backtest(
 
         if position is not None:
             ladder = _exit_ladder(position.entry_price, c, atr)
-            hit_stop = low <= ladder["final_stop"]
+            # Pine uses process_orders_on_close=true: stop fires on CLOSE, not LOW
+            hit_stop = c <= ladder["final_stop"]
 
             if hit_stop:
                 position.exit_time = bar_ts
