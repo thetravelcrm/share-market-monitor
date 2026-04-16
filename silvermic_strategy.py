@@ -371,10 +371,13 @@ def run_backtest(
         low = float(bar["Low"].iloc[-1])
         atr = entry["atr"]
 
-        # IST time for EOD check
+        # IST time for EOD check.
+        # Fyers timestamps are bar OPEN; Pine fires on bar CLOSE (process_orders_on_close).
+        # Add 15 min so the check mirrors when TradingView actually acts on the bar.
         ist = bar_ts + IST_OFFSET
-        eod = (ist.hour > FLAT_HOUR) or (
-            ist.hour == FLAT_HOUR and ist.minute >= FLAT_MINUTE
+        ist_close = ist + timedelta(minutes=15)
+        eod = (ist_close.hour > FLAT_HOUR) or (
+            ist_close.hour == FLAT_HOUR and ist_close.minute >= FLAT_MINUTE
         )
 
         if position is not None:
