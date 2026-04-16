@@ -256,6 +256,7 @@ def _exit_ladder(entry: float, current: float, atr: float,
 class Trade:
     entry_time:  datetime
     entry_price: float
+    entry_atr:   float           = 0.0    # frozen at entry for consistent stop
     exit_time:   datetime | None = None
     exit_price:  float | None    = None
     exit_reason: str             = ""
@@ -280,7 +281,7 @@ def run_backtest(df_15m: pd.DataFrame, df_1h: pd.DataFrame,
     rsi_entry_min  = p.get("rsi_entry_min",   52.0)
     atr_sl_mult    = p.get("atr_sl_mult",     1.5)
     flat_hour      = p.get("flat_hour",       23)
-    flat_min       = p.get("flat_min",        35)
+    flat_min       = p.get("flat_min",        15)   # MCX closes 23:30 IST; last 15m bar starts 23:15
     eod_min_profit = p.get("eod_min_profit",  2500)
 
     trades:   list[Trade] = []
@@ -307,7 +308,8 @@ def run_backtest(df_15m: pd.DataFrame, df_1h: pd.DataFrame,
         eod = ist.hour > flat_hour or (ist.hour == flat_hour and ist.minute >= flat_min)
 
         if position is not None:
-            ladder   = _exit_ladder(position.entry_price, c, atr)
+            # Use ATR frozen at entry so stop level doesn't drift between bars
+            ladder   = _exit_ladder(position.entry_price, c, position.entry_atr)
             # Use bar Low for stop check (mirrors TradingView bar-by-bar fill)
             hit_stop = low <= ladder["final_stop"]
             if hit_stop:
@@ -327,7 +329,7 @@ def run_backtest(df_15m: pd.DataFrame, df_1h: pd.DataFrame,
                 position = None
         else:
             if entry["signal"] == "LONG" and not eod:
-                position = Trade(entry_time=bar_ts, entry_price=c)
+                position = Trade(entry_time=bar_ts, entry_price=c, entry_atr=atr)
 
     # Close any still-open position at end of data
     if position is not None:
