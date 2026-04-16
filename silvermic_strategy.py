@@ -371,15 +371,12 @@ def run_backtest(
         c   = float(bar["Close"].iloc[-1])
         atr = entry["atr"]
 
-        # IST time for EOD check.
-        # Fyers timestamps are bar OPEN; Pine fires on bar CLOSE (process_orders_on_close).
-        # Add 15 min so the check mirrors when TradingView actually acts on the bar.
+        # EOD check mirrors Pine's: curH = hour(time), curM = minute(time)
+        # Pine uses bar OPEN time for the window check — NOT bar close time.
+        # DST bars (23:45 IST open) still fire correctly: 45 >= 25 → True.
         ist = bar_ts + IST_OFFSET
-        ist_close = ist + timedelta(minutes=15)
-        # ist_close.hour == 0 catches DST sessions (MCX until 23:55) where
-        # the 23:45 bar closes at midnight and wraps to hour 0.
-        eod = (ist_close.hour == 0) or (ist_close.hour > FLAT_HOUR) or (
-            ist_close.hour == FLAT_HOUR and ist_close.minute >= FLAT_MINUTE
+        eod = (ist.hour > FLAT_HOUR) or (
+            ist.hour == FLAT_HOUR and ist.minute >= FLAT_MINUTE
         )
 
         if position is not None:
