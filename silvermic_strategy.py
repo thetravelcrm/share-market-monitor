@@ -391,8 +391,8 @@ def run_backtest(
                 position.pnl_rs = (position.exit_price - position.entry_price) * LOT_SIZE
                 trades.append(position)
                 position = None
-            elif eod and ladder["profit_rs"] >= MID_PROFIT:
-                # EOD square-off only if unrealised ≥ midLockProfit
+            elif eod and ladder["profit_rs"] >= BIG_PROFIT:
+                # EOD square-off only if unrealised ≥ bigLockProfit (₹10,000)
                 position.exit_time = bar_ts
                 position.exit_price = c
                 position.exit_reason = "EOD square-off"
