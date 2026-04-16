@@ -20,7 +20,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from fyers_fetcher import get_history  # must return OHLCV with UTC DatetimeIndex
+from silvermic_continuous import get_continuous  # backwards-adjusted continuous series
 
 logger = logging.getLogger(__name__)
 
@@ -473,13 +473,15 @@ class SilverMicResult:
 
 
 def analyze(access_token: str) -> SilverMicResult:
-    """Fetch live bars and return current signal state."""
-    today    = (datetime.now(timezone.utc) + IST_OFFSET).strftime("%Y-%m-%d")
-    from_1h  = (datetime.now(timezone.utc) + IST_OFFSET - timedelta(days=30)).strftime("%Y-%m-%d")
-    from_15m = (datetime.now(timezone.utc) + IST_OFFSET - timedelta(days=5)).strftime("%Y-%m-%d")
+    """
+    Fetch live bars and return current signal state.
 
-    df_1h  = get_history("SILVERMIC", access_token, "60", from_1h,  today)
-    df_15m = get_history("SILVERMIC", access_token, "15", from_15m, today)
+    Uses the backwards-adjusted continuous SILVERMIC series so rollover gaps
+    don't fake out the indicators.  The latest close equals the live
+    front-month contract price — no offset needed when placing manual orders.
+    """
+    df_1h  = get_continuous(access_token, "60", days_back=30)
+    df_15m = get_continuous(access_token, "15", days_back=5)
 
     if df_1h.empty or df_15m.empty or len(df_15m) < 30:
         raise RuntimeError("Insufficient data — check Fyers token")
@@ -495,13 +497,15 @@ def analyze(access_token: str) -> SilverMicResult:
     )
 
 
-def backtest(access_token: str, days: int = 90) -> tuple[list[Trade], dict]:
-    """Fetch history and run a bar-by-bar backtest. Fyers API limit: 90 days."""
-    today  = (datetime.now(timezone.utc) + IST_OFFSET).strftime("%Y-%m-%d")
-    from_d = (datetime.now(timezone.utc) + IST_OFFSET - timedelta(days=days)).strftime("%Y-%m-%d")
-
-    df_1h  = get_history("SILVERMIC", access_token, "60", from_d, today)
-    df_15m = get_history("SILVERMIC", access_token, "15", from_d, today)
+def backtest(access_token: str, days: int = 180) -> tuple[list[Trade], dict]:
+    """
+    Fetch history and run a bar-by-bar backtest on a continuous SILVERMIC
+    series that spans multiple bi-monthly contracts (Apr/Jun/Aug/Nov), each
+    used only during its front-month window and backwards-adjusted for
+    rollover gaps.  Default 180 days ≈ 3 contracts.
+    """
+    df_1h  = get_continuous(access_token, "60", days_back=days)
+    df_15m = get_continuous(access_token, "15", days_back=days)
 
     if df_1h.empty or df_15m.empty:
         raise RuntimeError("No backtest data — check Fyers token")
