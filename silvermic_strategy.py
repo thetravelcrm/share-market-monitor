@@ -359,8 +359,9 @@ def run_backtest(
         bar    = df_15m.iloc[: i + 1]
         bar_ts = df_15m.index[i]
 
-        # 1H bars up to this 15m time
-        htf_bars = df_1h[df_1h.index <= bar_ts]
+        # Only use CLOSED 1H bars (Pine: barmerge.lookahead_off).
+        # A 1H bar opening at T closes at T+1h; include it only when T+1h <= bar_ts.
+        htf_bars = df_1h[df_1h.index + pd.Timedelta(hours=1) <= bar_ts]
         if len(htf_bars) < 15:
             continue
 
@@ -375,7 +376,9 @@ def run_backtest(
         # Add 15 min so the check mirrors when TradingView actually acts on the bar.
         ist = bar_ts + IST_OFFSET
         ist_close = ist + timedelta(minutes=15)
-        eod = (ist_close.hour > FLAT_HOUR) or (
+        # ist_close.hour == 0 catches DST sessions (MCX until 23:55) where
+        # the 23:45 bar closes at midnight and wraps to hour 0.
+        eod = (ist_close.hour == 0) or (ist_close.hour > FLAT_HOUR) or (
             ist_close.hour == FLAT_HOUR and ist_close.minute >= FLAT_MINUTE
         )
 
