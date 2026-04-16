@@ -605,8 +605,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.3"
-_APP_BUILD   = "16 Apr 2026 13:54"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.4"
+_APP_BUILD   = "16 Apr 2026 13:57"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1104,7 +1104,7 @@ with tab_signals:
             if not signals:
                 st.info("No signals in this category.")
                 return
-            for item, imp, sig in signals:
+            for _card_idx, (item, imp, sig) in enumerate(signals):
                 sym      = cur_sym(imp.price_data)
                 is_under = imp.reaction_status == "Underreacted"
                 tech     = getattr(imp.price_data, "technical", None) if imp.price_data else None
@@ -1317,7 +1317,7 @@ with tab_signals:
                            "MEDIUM":"badge-medium","LOW":"badge-low"}.get(imp.impact_strength,"badge-teal")
 
                 # ── Log to journal button ──────────────────────
-                log_key = f"log_{sig.symbol}_{item.published.timestamp():.0f}"
+                log_key = f"log_{card_class}_{_card_idx}_{sig.symbol}"
                 st.markdown(
                     f'<div class="{card_class}">'
                     f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">'
