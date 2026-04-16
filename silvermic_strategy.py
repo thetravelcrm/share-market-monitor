@@ -6,7 +6,7 @@
 #    - 15m entry:        Above VWAP + EMA9>21 + RSI>52 + bull candle
 #                        + pullback to EMA zone + EMA spread %
 #    - Exit ladder:      ATR-based trailing stop with 3 profit locks
-#    - EOD square-off:   23:35 IST if profit >= ₹2,500 (midLockProfit)
+#    - EOD square-off:   23:25 IST bar open if profit >= ₹10,000 (bigLockProfit)
 #
 #  Data source: Fyers API history (INR/kg). You must provide get_history().
 # ─────────────────────────────────────────────────────────────
@@ -348,8 +348,8 @@ def run_backtest(
     Bar-by-bar backtest on 15m bars with 1H trend filter.
 
     - Uses last completed 1H bar as HTF filter (no look-ahead).
-    - Uses Low of bar to test stop-hit, exits at stop price (like strategy.exit).
-    - EOD: close position at 23:35 IST if profit >= MID_PROFIT.
+    - Stop fires on bar CLOSE (process_orders_on_close=true).
+    - EOD: close at bar open >= 23:25 IST only if profit >= BIG_PROFIT (₹10,000).
     """
     trades: list[Trade] = []
     position: Trade | None = None
