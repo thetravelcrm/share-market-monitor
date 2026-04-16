@@ -495,8 +495,8 @@ def analyze(access_token: str) -> SilverMicResult:
     )
 
 
-def backtest(access_token: str, days: int = 140) -> tuple[list[Trade], dict]:
-    """Fetch history (up to 140 days) and run a bar-by-bar backtest."""
+def backtest(access_token: str, days: int = 90) -> tuple[list[Trade], dict]:
+    """Fetch history and run a bar-by-bar backtest. Fyers API limit: 90 days."""
     today  = (datetime.now(timezone.utc) + IST_OFFSET).strftime("%Y-%m-%d")
     from_d = (datetime.now(timezone.utc) + IST_OFFSET - timedelta(days=days)).strftime("%Y-%m-%d")
 
