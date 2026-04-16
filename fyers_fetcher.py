@@ -312,7 +312,9 @@ def get_history(symbol: str, access_token: str,
     import pandas as pd
     try:
         fyers = get_fyers_model(access_token)
-        fyers_sym = _mcx_fyers_symbol(symbol) if symbol in _MCX_SYMBOLS else f"NSE:{symbol}-EQ"
+        # MCX history symbols require the "FUT" suffix (e.g. MCX:SILVERMIC26APRFUT)
+        # whereas quote symbols omit it (MCX:SILVERMIC26APR)
+        fyers_sym = (_mcx_fyers_symbol(symbol) + "FUT") if symbol in _MCX_SYMBOLS else f"NSE:{symbol}-EQ"
         resp = fyers.history({
             "symbol":      fyers_sym,
             "resolution":  resolution,
