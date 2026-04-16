@@ -605,7 +605,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7"
+_APP_VERSION = "v7.1"
+_APP_BUILD   = "16 Apr 2026 13:47"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -652,8 +653,9 @@ st.markdown(
           <strong>Last Run</strong>{_last_run_ist}
         </div>
         <div style="background:rgba(0,212,255,0.08);border:1px solid #00d4ff;border-radius:8px;
-                    padding:4px 10px;font-size:11px;color:#00d4ff;font-weight:700">
+                    padding:4px 10px;font-size:11px;color:#00d4ff;font-weight:700;line-height:1.6">
           {_APP_VERSION}
+          <span style="color:#7a8bb0;font-weight:400;font-size:10px;display:block">{_APP_BUILD}</span>
         </div>
       </div>
     </div>
