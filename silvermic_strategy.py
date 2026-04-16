@@ -171,22 +171,33 @@ def _htf_filter(
     ema_slow: int = EMA_SLOW_LEN,
     rsi_len: int = RSI_LEN,
     rsi_bull_min: float = RSI_BULL_LEVEL,
+    current_price: float | None = None,
 ) -> dict:
-    """Evaluate the 1H trend filter using the last completed 1H bar."""
+    """
+    Evaluate the 1H trend filter using the last completed 1H bar.
+
+    current_price: the current 15m bar's close. Pine's htfBull checks
+    'close > stLineHTF' where close is the 15m close, not the 1H close.
+    Pass the live 15m close so the comparison matches Pine exactly.
+    Falls back to the 1H close when not provided (e.g. live signal calls).
+    """
     close = df_1h["Close"]
     st_line, st_dir = _s_supertrend(df_1h, period=st_atr_len, factor=st_factor)
     ema9   = _s_ema(close, ema_fast)
     ema21  = _s_ema(close, ema_slow)
     rsi    = _s_rsi(close, rsi_len)
 
-    cv      = float(close.iloc[-1])
+    htf_close_v = float(close.iloc[-1])       # last completed 1H close
     st_v    = float(st_line.iloc[-1])
     dir_v   = float(st_dir.iloc[-1])
     ema9_v  = float(ema9.iloc[-1])
     ema21_v = float(ema21.iloc[-1])
     rsi_v   = float(rsi.iloc[-1])
 
-    price_above_st = cv > st_v
+    # Pine: htfBull = close > stLineHTF  →  'close' is the 15m bar's close,
+    # NOT the 1H bar's close.  Use current_price when available.
+    price_ref      = current_price if current_price is not None else htf_close_v
+    price_above_st = price_ref > st_v
     st_bullish     = dir_v < 0         # -1 = bull
     ema_bull       = ema9_v > ema21_v
     rsi_bull       = rsi_v > rsi_bull_min
@@ -202,7 +213,7 @@ def _htf_filter(
         ema9=round(ema9_v, 2),
         ema21=round(ema21_v, 2),
         rsi=round(rsi_v, 2),
-        close=round(cv, 2),
+        close=round(htf_close_v, 2),
     )
 
 
@@ -365,10 +376,11 @@ def run_backtest(
         if len(htf_bars) < 15:
             continue
 
-        htf   = _htf_filter(htf_bars)
-        entry = _entry_conditions(bar, htf["htf_bull"])
-
         c   = float(bar["Close"].iloc[-1])
+        # Pass current 15m close so _htf_filter mirrors Pine's
+        # 'htfBull = close > stLineHTF' (where close = 15m close, not 1H close).
+        htf   = _htf_filter(htf_bars, current_price=c)
+        entry = _entry_conditions(bar, htf["htf_bull"])
         atr = entry["atr"]
 
         # EOD check mirrors Pine's: curH = hour(time), curM = minute(time)
@@ -392,6 +404,10 @@ def run_backtest(
                 position.pnl_rs = (position.exit_price - position.entry_price) * LOT_SIZE
                 trades.append(position)
                 position = None
+                # Pine re-entry: after stop-out, if conditions still met on same bar close,
+                # a new entry fires immediately (process_orders_on_close behaviour).
+                if entry["signal"] == "LONG" and not eod:
+                    position = Trade(entry_time=bar_ts, entry_price=c)
             elif eod and ladder["profit_rs"] >= BIG_PROFIT:
                 # EOD square-off only if unrealised ≥ bigLockProfit (₹10,000)
                 position.exit_time = bar_ts
@@ -468,7 +484,8 @@ def analyze(access_token: str) -> SilverMicResult:
     if df_1h.empty or df_15m.empty or len(df_15m) < 30:
         raise RuntimeError("Insufficient data — check Fyers token")
 
-    htf = _htf_filter(df_1h)
+    live_price = float(df_15m["Close"].iloc[-1])
+    htf = _htf_filter(df_1h, current_price=live_price)
     ent = _entry_conditions(df_15m, htf["htf_bull"])
     return SilverMicResult(
         signal     = ent["signal"],
@@ -478,8 +495,8 @@ def analyze(access_token: str) -> SilverMicResult:
     )
 
 
-def backtest(access_token: str, days: int = 90) -> tuple[list[Trade], dict]:
-    """Fetch history (up to 90 days) and run a bar-by-bar backtest."""
+def backtest(access_token: str, days: int = 140) -> tuple[list[Trade], dict]:
+    """Fetch history (up to 140 days) and run a bar-by-bar backtest."""
     today  = (datetime.now(timezone.utc) + IST_OFFSET).strftime("%Y-%m-%d")
     from_d = (datetime.now(timezone.utc) + IST_OFFSET - timedelta(days=days)).strftime("%Y-%m-%d")
 
