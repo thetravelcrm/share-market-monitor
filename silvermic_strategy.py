@@ -469,10 +469,11 @@ def run_backtest(
 
 @dataclass
 class SilverMicResult:
-    signal:     str
-    htf:        dict
-    entry:      dict
-    fetched_at: datetime
+    signal:       str                        # Final combined signal: "LONG" | "WAIT"
+    htf:          dict
+    entry:        dict
+    fetched_at:   datetime
+    news_verdict: dict | None = None         # Silver news intelligence verdict
 
 
 def analyze(access_token: str) -> SilverMicResult:
@@ -482,6 +483,10 @@ def analyze(access_token: str) -> SilverMicResult:
     Uses the backwards-adjusted continuous SILVERMIC series so rollover gaps
     don't fake out the indicators.  The latest close equals the live
     front-month contract price — no offset needed when placing manual orders.
+
+    After computing the technical signal, a news intelligence gate checks
+    silver-specific sentiment.  If technicals say LONG but news is bearish,
+    the final signal is downgraded to WAIT (trap avoidance).
     """
     # Both resolutions MUST use the same days_back so they span the same
     # rollover windows and get the same backwards-adjustment gap applied.
@@ -497,11 +502,36 @@ def analyze(access_token: str) -> SilverMicResult:
     live_price = float(df_15m["Close"].iloc[-1])
     htf = _htf_filter(df_1h, current_price=live_price)
     ent = _entry_conditions(df_15m, htf["htf_bull"])
+
+    # ── News intelligence gate (non-blocking) ────────────────
+    news_verdict = None
+    try:
+        from silver_news_intel import get_silver_verdict
+        verdict = get_silver_verdict(hours_back=12)
+        news_verdict = {
+            "score":         verdict.score,
+            "label":         verdict.label,
+            "decision":      verdict.decision,
+            "confidence":    verdict.confidence,
+            "top_insights":  verdict.top_insights,
+            "risk_flags":    verdict.risk_flags,
+            "article_count": verdict.article_count,
+        }
+    except Exception as exc:
+        logger.warning("News intelligence unavailable: %s", exc)
+
+    # Combine technical + news for final signal
+    final_signal = ent["signal"]
+    if final_signal == "LONG" and news_verdict:
+        if news_verdict["decision"] == "AVOID":
+            final_signal = "WAIT"
+
     return SilverMicResult(
-        signal     = ent["signal"],
-        htf        = htf,
-        entry      = ent,
-        fetched_at = datetime.now(timezone.utc),
+        signal       = final_signal,
+        htf          = htf,
+        entry        = ent,
+        fetched_at   = datetime.now(timezone.utc),
+        news_verdict = news_verdict,
     )
 
 

@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.14"
-_APP_BUILD   = "17 Apr 2026 15:17"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.15"
+_APP_BUILD   = "17 Apr 2026 18:52"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2318,7 +2318,28 @@ with tab_silvermic:
                 _sm_check("EMA Spread ≥ 0.09%",  _ent["strong_trend"],  f"{_ent['spread_pct']:.3f}%")
 
             with _sm_right:
-                if _sig == "LONG":
+                # Combined signal state: technical + news
+                _nv = _sm_result.news_verdict
+                _tech_long = _ent["signal"] == "LONG"  # raw technical signal
+                _news_decision = _nv["decision"] if _nv else None
+
+                if _tech_long and _news_decision == "CONFIRMED":
+                    _box_color  = "#00ff88"
+                    _box_bg     = "#0a2015"
+                    _box_border = "#00ff88"
+                    _box_label  = "LONG SETUP"
+                elif _tech_long and _news_decision == "WAIT":
+                    _box_color  = "#ffaa33"
+                    _box_bg     = "#2a1f0a"
+                    _box_border = "#ffaa33"
+                    _box_label  = "NEWS HOLD"
+                elif _tech_long and _news_decision == "AVOID":
+                    _box_color  = "#ff4455"
+                    _box_bg     = "#2a0a0a"
+                    _box_border = "#ff4455"
+                    _box_label  = "TRAP - AVOID"
+                elif _tech_long and _news_decision is None:
+                    # News unavailable — show technical signal with caveat
                     _box_color  = "#00ff88"
                     _box_bg     = "#0a2015"
                     _box_border = "#00ff88"
@@ -2364,6 +2385,114 @@ with tab_silvermic:
                         f"</table>",
                         unsafe_allow_html=True,
                     )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Section 2.5: News Confirmation Panel ─────────────────
+            st.markdown("#### 🧠 News Confirmation")
+            _nv = _sm_result.news_verdict
+            if _nv:
+                _nv_score = _nv["score"]
+                _nv_label = _nv["label"]
+                _nv_decision = _nv["decision"]
+                _nv_conf = _nv["confidence"]
+                _nv_insights = _nv.get("top_insights", [])
+                _nv_risks = _nv.get("risk_flags", [])
+                _nv_count = _nv.get("article_count", 0)
+
+                # Decision colors
+                if _nv_decision == "CONFIRMED":
+                    _nd_color, _nd_bg, _nd_icon = "#00ff88", "#0a2015", "✅"
+                    _nd_text = "CONFIRMED BUY"
+                elif _nv_decision == "AVOID":
+                    _nd_color, _nd_bg, _nd_icon = "#ff4455", "#2a0a0a", "❌"
+                    _nd_text = "TRAP — AVOID"
+                else:
+                    _nd_color, _nd_bg, _nd_icon = "#ffaa33", "#2a1f0a", "⚠️"
+                    _nd_text = "WAIT — NO TRADE"
+
+                # Score bar
+                _bar_filled = int(_nv_score / 10 * 20)
+                _bar_empty  = 20 - _bar_filled
+                if _nv_score >= 6.0:
+                    _bar_color = "#00ff88"
+                elif _nv_score >= 4.5:
+                    _bar_color = "#ffaa33"
+                else:
+                    _bar_color = "#ff4455"
+
+                # Sentiment dot
+                _sent_dot = {"Strong Bullish": "🟢", "Bullish": "🟢",
+                             "Neutral": "🟡", "No Data": "⚪",
+                             "Bearish": "🔴", "Strong Bearish": "🔴"}.get(_nv_label, "⚪")
+
+                _nc1, _nc2, _nc3 = st.columns(3)
+                with _nc1:
+                    st.markdown(
+                        f"<div style='background:#141829;border:1px solid #2d3748;border-radius:8px;"
+                        f"padding:16px;text-align:center'>"
+                        f"<div style='color:#a0aec0;font-size:11px;margin-bottom:6px'>News Score</div>"
+                        f"<div style='color:{_bar_color};font-size:24px;font-weight:800'>"
+                        f"{_nv_score}/10</div>"
+                        f"<div style='font-family:monospace;font-size:10px;color:{_bar_color};"
+                        f"margin-top:4px'>{'█' * _bar_filled}{'░' * _bar_empty}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with _nc2:
+                    st.markdown(
+                        f"<div style='background:#141829;border:1px solid #2d3748;border-radius:8px;"
+                        f"padding:16px;text-align:center'>"
+                        f"<div style='color:#a0aec0;font-size:11px;margin-bottom:6px'>Sentiment</div>"
+                        f"<div style='font-size:24px'>{_sent_dot}</div>"
+                        f"<div style='color:#e0e6ff;font-size:13px;font-weight:600;"
+                        f"margin-top:4px'>{_nv_label}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with _nc3:
+                    st.markdown(
+                        f"<div style='background:{_nd_bg};border:2px solid {_nd_color};border-radius:8px;"
+                        f"padding:16px;text-align:center'>"
+                        f"<div style='color:#a0aec0;font-size:11px;margin-bottom:6px'>Final Decision</div>"
+                        f"<div style='font-size:24px'>{_nd_icon}</div>"
+                        f"<div style='color:{_nd_color};font-size:13px;font-weight:700;"
+                        f"margin-top:4px'>{_nd_text}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                # Insights + risk flags
+                if _nv_insights:
+                    st.markdown(
+                        "<div style='margin-top:12px'>"
+                        "<span style='color:#a0aec0;font-size:12px;font-weight:600'>Top Insights:</span>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    for _ins in _nv_insights[:3]:
+                        st.markdown(
+                            f"<div style='color:#e0e6ff;font-size:12px;padding:2px 0 2px 12px'>"
+                            f"• {_ins}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                if _nv_risks:
+                    for _rf in _nv_risks:
+                        st.markdown(
+                            f"<div style='color:#ffaa33;font-size:11px;margin-top:4px'>"
+                            f"⚠ {_rf}</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                st.markdown(
+                    f"<div style='color:#6b7280;font-size:11px;margin-top:6px'>"
+                    f"📰 Based on {_nv_count} article{'s' if _nv_count != 1 else ''} "
+                    f"| Confidence: {_nv_conf}/10</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info("News intelligence unavailable — connect to internet for news confirmation.", icon="📡")
 
             st.markdown("<br>", unsafe_allow_html=True)
 
