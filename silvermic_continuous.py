@@ -11,12 +11,19 @@
 #  computes the price gap at each rollover, and adds it to all older prices
 #  so the series is continuous.  Volume is NOT adjusted.
 #
+#  IMPORTANT — gap is computed ONCE per rollover (at the 15m level) and the
+#  SAME gap is applied when building both the 15m and 1H series, so the two
+#  resolutions are always on the same adjusted price scale.  This prevents
+#  the HTF SuperTrend line and the 15m close from drifting apart across
+#  rollover boundaries.
+#
 #  Use this for both backtest and live signal generation.  The most-recent
 #  segment is unadjusted, so the latest close equals the live front-month
 #  contract price — no offset needed for manual order placement.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, timezone, timedelta
 import logging
 
@@ -41,8 +48,13 @@ def _contract_symbol(year: int, month: int) -> str:
 
 
 def _approx_expiry(year: int, month: int) -> datetime:
-    """MCX silver expires on the last working day of the month; use day 28 (UTC)."""
-    return datetime(year, month, 28, tzinfo=timezone.utc)
+    """
+    MCX silver expires on the last working day of the month.
+    Use the actual last calendar day (not hardcoded 28) to avoid
+    rolling too early on 31-day months like August and November.
+    """
+    last_day = calendar.monthrange(year, month)[1]
+    return datetime(year, month, last_day, tzinfo=timezone.utc)
 
 
 def _list_contracts(start: datetime, end: datetime) -> list[dict]:
@@ -86,6 +98,90 @@ def _fetch_one(symbol: str, token: str, resolution: str,
         return pd.DataFrame()
 
 
+# ─────────────────────────────────────────────────────────────
+#  Rollover gap cache — computed once, reused for all resolutions
+# ─────────────────────────────────────────────────────────────
+# Key: (older_symbol, newer_symbol)  →  gap value (float)
+_gap_cache: dict[tuple[str, str], float] = {}
+
+
+def _compute_rollover_gaps(
+    contracts: list[dict],
+    rollovers: list[datetime],
+    token: str,
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
+    """
+    Fetch 15m data for each contract's front-month window, compute the
+    rollover gap ONCE per junction using the 15m close, and cache it.
+
+    Returns segments: [{contract, df (15m), active_from, active_to}, ...]
+    """
+    global _gap_cache
+
+    segments: list[dict] = []
+    for i, c in enumerate(contracts):
+        active_from = rollovers[i - 1] if i > 0 else (rollovers[i] - timedelta(days=90))
+        active_to   = rollovers[i]
+
+        if active_to < start - timedelta(days=5) or active_from > end:
+            continue
+
+        f = max(active_from, start - timedelta(days=5)).strftime("%Y-%m-%d")
+        t = min(active_to,   end).strftime("%Y-%m-%d")
+        df = _fetch_one(c["symbol"], token, "15", f, t)
+        if df.empty:
+            logger.warning("no data for %s window %s → %s — gap may be wrong "
+                           "if this is a middle contract", c["symbol"], f, t)
+            continue
+        segments.append({"contract": c, "df": df})
+
+    if len(segments) < 2:
+        return segments
+
+    # Walk newest→oldest, compute gap at each junction from the 15m data
+    for i in range(len(segments) - 1, 0, -1):
+        older = segments[i - 1]
+        newer = segments[i]
+        key = (older["contract"]["symbol"], newer["contract"]["symbol"])
+
+        if key in _gap_cache:
+            gap = _gap_cache[key]
+        else:
+            older_last_ts    = older["df"].index[-1]
+            older_last_close = float(older["df"]["Close"].iloc[-1])
+
+            # Fetch newer contract's 15m bars around the transition
+            from_d = (older_last_ts - timedelta(days=3)).strftime("%Y-%m-%d")
+            to_d   = (older_last_ts + timedelta(days=3)).strftime("%Y-%m-%d")
+            newer_window = _fetch_one(
+                newer["contract"]["symbol"], token, "15", from_d, to_d,
+            )
+
+            if newer_window.empty:
+                logger.warning("cannot compute gap for %s→%s (no newer data); "
+                               "using gap=0", key[0], key[1])
+                gap = 0.0
+            else:
+                newer_price = newer_window["Close"].asof(older_last_ts)
+                if pd.isna(newer_price):
+                    # Fallback: first available bar of newer contract
+                    newer_price = float(newer_window["Close"].iloc[0])
+                gap = float(newer_price) - older_last_close
+
+            _gap_cache[key] = gap
+
+        if abs(gap) < 1e-6:
+            continue
+
+        for j in range(i):
+            for col in ("Open", "High", "Low", "Close"):
+                segments[j]["df"][col] = segments[j]["df"][col] + gap
+
+    return segments
+
+
 def get_continuous(token: str, resolution: str, days_back: int = 180) -> pd.DataFrame:
     """
     Backwards-adjusted continuous SILVERMIC series.
@@ -96,6 +192,10 @@ def get_continuous(token: str, resolution: str, days_back: int = 180) -> pd.Data
     Returns a DataFrame with UTC DatetimeIndex and columns Open/High/Low/Close/Volume.
     Older segments are price-shifted so rollover gaps disappear.  The newest
     segment is unadjusted, so the last close matches the live front-month quote.
+
+    The rollover gap is ALWAYS computed from 15m data and cached, so calling
+    this with "60" or "D" uses the same gap — the 1H and 15m series are
+    guaranteed to be on the same adjusted price scale.
     """
     now_ist = datetime.now(timezone.utc) + IST_OFFSET
     start   = now_ist - timedelta(days=days_back)
@@ -105,61 +205,47 @@ def get_continuous(token: str, resolution: str, days_back: int = 180) -> pd.Data
     if not contracts:
         return pd.DataFrame()
 
-    # Each contract's front-month window = (prev_rollover, own_rollover]
     rollovers = [c["expiry"] - timedelta(days=ROLLOVER_DAYS_BEFORE_EXPIRY)
                  for c in contracts]
 
+    # Step 1: compute (and cache) rollover gaps from 15m data
+    _compute_rollover_gaps(contracts, rollovers, token, start, end)
+
+    # Step 2: fetch the requested resolution and apply the SAME cached gaps
     segments: list[dict] = []
     for i, c in enumerate(contracts):
         active_from = rollovers[i - 1] if i > 0 else (rollovers[i] - timedelta(days=90))
         active_to   = rollovers[i]
 
-        # Skip segments entirely outside the user's window
         if active_to < start - timedelta(days=5) or active_from > end:
             continue
 
         f = max(active_from, start - timedelta(days=5)).strftime("%Y-%m-%d")
         t = min(active_to,   end).strftime("%Y-%m-%d")
+
+        if resolution == "15":
+            # Already fetched in _compute_rollover_gaps — but not cached in a
+            # way we can reuse here (gaps were already applied to those DFs).
+            # Re-fetch at the requested resolution.  For "15" this is a dup
+            # call, but keeps the code simple and the Fyers cache may serve it.
+            pass
+
         df = _fetch_one(c["symbol"], token, resolution, f, t)
         if df.empty:
-            logger.info("no data for %s window %s → %s", c["symbol"], f, t)
             continue
         segments.append({"contract": c, "df": df})
 
     if not segments:
         return pd.DataFrame()
 
-    # Compute rollover gap for each junction and apply backwards.
-    # Walk from newest to oldest; each gap shifts all earlier segments.
+    # Apply the same cached gaps (newest→oldest)
     for i in range(len(segments) - 1, 0, -1):
         older = segments[i - 1]
         newer = segments[i]
-
-        older_last_ts    = older["df"].index[-1]
-        older_last_close = float(older["df"]["Close"].iloc[-1])
-
-        # Fetch newer contract around the transition (±3 days for weekends/holidays)
-        # Use daily resolution: one close per day is enough and is the most
-        # reliable for far-month contracts that may not print every 15m bar.
-        from_d = (older_last_ts - timedelta(days=3)).strftime("%Y-%m-%d")
-        to_d   = (older_last_ts + timedelta(days=3)).strftime("%Y-%m-%d")
-        newer_window = _fetch_one(
-            newer["contract"]["symbol"], token, "D", from_d, to_d,
-        )
-        if newer_window.empty:
-            logger.warning("cannot compute gap at %s (no newer data); skipping adjust",
-                           older_last_ts)
-            continue
-
-        newer_price = newer_window["Close"].asof(older_last_ts)
-        if pd.isna(newer_price):
-            newer_price = float(newer_window["Close"].iloc[0])
-
-        gap = float(newer_price) - older_last_close
+        key = (older["contract"]["symbol"], newer["contract"]["symbol"])
+        gap = _gap_cache.get(key, 0.0)
         if abs(gap) < 1e-6:
             continue
-
-        # Shift ALL earlier segments (0..i-1) by +gap so their prices align with newer
         for j in range(i):
             for col in ("Open", "High", "Low", "Close"):
                 segments[j]["df"][col] = segments[j]["df"][col] + gap

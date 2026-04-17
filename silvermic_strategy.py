@@ -480,8 +480,13 @@ def analyze(access_token: str) -> SilverMicResult:
     don't fake out the indicators.  The latest close equals the live
     front-month contract price — no offset needed when placing manual orders.
     """
-    df_1h  = get_continuous(access_token, "60", days_back=30)
-    df_15m = get_continuous(access_token, "15", days_back=5)
+    # Both resolutions MUST use the same days_back so they span the same
+    # rollover windows and get the same backwards-adjustment gap applied.
+    # Using different windows (e.g. 30 vs 5) can leave one series adjusted
+    # and the other raw, making the HTF SuperTrend comparison meaningless.
+    _days = 30
+    df_1h  = get_continuous(access_token, "60", days_back=_days)
+    df_15m = get_continuous(access_token, "15", days_back=_days)
 
     if df_1h.empty or df_15m.empty or len(df_15m) < 30:
         raise RuntimeError("Insufficient data — check Fyers token")

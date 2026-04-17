@@ -9,6 +9,19 @@ from typing import Optional
 import pandas as pd
 import yfinance as yf
 
+# MCX commodity symbols use COMEX/NYMEX proxy tickers on yfinance, not NSE
+_MCX_YF_PROXY: dict[str, str] = {
+    "SILVERMIC":  "SI=F",    # COMEX Silver
+    "GOLDM":      "GC=F",    # COMEX Gold
+    "CRUDEOIL":   "CL=F",    # NYMEX WTI Crude
+    "NATURALGAS": "NG=F",    # NYMEX Nat Gas
+    "COPPER":     "HG=F",    # COMEX Copper
+    "ALUMINIUM":  "ALI=F",   # CME Aluminium
+    "ZINC":       "ZNC=F",
+    "NICKEL":     "NI=F",
+    "LEAD":       "PB=F",
+}
+
 
 def backtest_signal(
     symbol: str,
@@ -24,7 +37,7 @@ def backtest_signal(
     Returns: {outcome, actual_return_pct, hit_target, hit_stop, max_favourable, max_adverse}
     """
     try:
-        ticker_sym = f"{symbol}.NS"
+        ticker_sym = _MCX_YF_PROXY.get(symbol, f"{symbol}.NS")
         start = signal_date.date()
         end   = (signal_date + timedelta(days=horizon_days + 5)).date()  # extra buffer for weekends
 
