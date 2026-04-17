@@ -59,14 +59,23 @@ def backtest_signal(
             high_px = float(row["High"])
             low_px  = float(row["Low"])
             if action == "BUY":
-                if high_px >= target:
+                tgt_hit = high_px >= target
+                stp_hit = low_px  <= stop
+                if tgt_hit and stp_hit:
+                    # Both hit on same bar — conservative: assume stop hit first
+                    hit_stop = True; break
+                if tgt_hit:
                     hit_target = True; break
-                if low_px  <= stop:
+                if stp_hit:
                     hit_stop   = True; break
             else:  # SHORT
-                if low_px  <= target:
+                tgt_hit = low_px  <= target
+                stp_hit = high_px >= stop
+                if tgt_hit and stp_hit:
+                    hit_stop = True; break
+                if tgt_hit:
                     hit_target = True; break
-                if high_px >= stop:
+                if stp_hit:
                     hit_stop   = True; break
 
         if action == "BUY":

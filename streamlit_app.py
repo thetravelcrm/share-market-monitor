@@ -605,8 +605,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.12"
-_APP_BUILD   = "17 Apr 2026 09:22"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.13"
+_APP_BUILD   = "17 Apr 2026 14:25"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2271,7 +2271,7 @@ with tab_silvermic:
                     unsafe_allow_html=True,
                 )
 
-            _sm_tile(_sm_c1, "Price > ST",    _htf["price_above_st"], f"₹{_htf['close']:,.0f} vs ₹{_htf['st_line']:,.0f}")
+            _sm_tile(_sm_c1, "Price > ST",    _htf["price_above_st"], f"₹{_htf['price_ref']:,.0f} vs ₹{_htf['st_line']:,.0f}")
             _sm_tile(_sm_c2, "ST Bullish",    _htf["st_bullish"],     "Bullish" if _htf["st_bullish"] else "Bearish")
             _sm_tile(_sm_c3, "EMA9 > EMA21",  _htf["ema_bull"],       f"₹{_htf['ema9']:,.0f} vs ₹{_htf['ema21']:,.0f}")
             _sm_tile(_sm_c4, "RSI > 50",      _htf["rsi_bull"],       f"RSI {_htf['rsi']:.1f}")
@@ -2330,20 +2330,23 @@ with tab_silvermic:
                     _ep   = _ent["entry_price"]
                     _sl   = _ent["stop_loss"]
                     _atr  = _ent["atr"]
-                    _c1_p = _ep + 1500 / _SM_LOT
-                    _c2_p = _ep + 4000 / _SM_LOT
-                    _c3_p = _ep + 11000 / _SM_LOT
+                    from silvermic_strategy import (CUSHION_PROFIT, MID_PROFIT, BIG_PROFIT,
+                                                     CUSHION_TRIGGER, MID_TRIGGER, BIG_TRIGGER)
+                    # Stop-lock price = entry + locked_profit / lot_size
+                    _c1_p = _ep + CUSHION_PROFIT / _SM_LOT
+                    _c2_p = _ep + MID_PROFIT / _SM_LOT
+                    _c3_p = _ep + BIG_PROFIT / _SM_LOT
                     st.markdown(
                         f"<table style='width:100%;border-collapse:collapse;font-size:12px'>"
                         f"<tr><td style='color:#a0aec0;padding:3px 0'>Entry</td>"
                         f"<td style='color:#e0e6ff;text-align:right;font-weight:600'>₹{_ep:,.2f}</td></tr>"
                         f"<tr><td style='color:#ff4455;padding:3px 0'>Stop Loss</td>"
                         f"<td style='color:#ff4455;text-align:right;font-weight:600'>₹{_sl:,.2f}</td></tr>"
-                        f"<tr><td style='color:#f6ad55;padding:3px 0'>Cushion ₹1,500</td>"
+                        f"<tr><td style='color:#f6ad55;padding:3px 0'>Cushion (lock ₹{CUSHION_PROFIT:,.0f})</td>"
                         f"<td style='color:#f6ad55;text-align:right'>₹{_c1_p:,.2f}</td></tr>"
-                        f"<tr><td style='color:#68d391;padding:3px 0'>Mid ₹4,000</td>"
+                        f"<tr><td style='color:#68d391;padding:3px 0'>Mid (lock ₹{MID_PROFIT:,.0f})</td>"
                         f"<td style='color:#68d391;text-align:right'>₹{_c2_p:,.2f}</td></tr>"
-                        f"<tr><td style='color:#00ff88;padding:3px 0'>Big ₹11,000</td>"
+                        f"<tr><td style='color:#00ff88;padding:3px 0'>Big (lock ₹{BIG_PROFIT:,.0f})</td>"
                         f"<td style='color:#00ff88;text-align:right'>₹{_c3_p:,.2f}</td></tr>"
                         f"</table>",
                         unsafe_allow_html=True,

@@ -82,11 +82,12 @@ class TechnicalData:
 # ─────────────────────────────────────────────────────────────
 
 def _rsi(close: pd.Series, period: int = 14) -> float:
+    """RSI using Wilder's exponential smoothing (matches Pine's ta.rsi)."""
     delta    = close.diff()
     gain     = delta.clip(lower=0)
     loss     = (-delta).clip(lower=0)
-    avg_gain = gain.rolling(period, min_periods=period).mean().iloc[-1]
-    avg_loss = loss.rolling(period, min_periods=period).mean().iloc[-1]
+    avg_gain = gain.ewm(com=period - 1, adjust=False).mean().iloc[-1]
+    avg_loss = loss.ewm(com=period - 1, adjust=False).mean().iloc[-1]
     if pd.isna(avg_gain) or pd.isna(avg_loss):
         return 50.0
     if avg_loss == 0:
@@ -176,7 +177,7 @@ def _atr(
         (high - prev_close).abs(),
         (low  - prev_close).abs(),
     ], axis=1).max(axis=1)
-    atr_val = round(float(tr.rolling(14).mean().iloc[-1]), 4)
+    atr_val = round(float(tr.ewm(alpha=1/14, adjust=False).mean().iloc[-1]), 4)
     atr_pct = round(atr_val / current_price * 100, 2) if current_price > 0 else 0.0
     return atr_val, atr_pct
 

@@ -244,10 +244,9 @@ STOCK_UNIVERSE = {
     # ── CONGLOMERATES / ADANI GROUP ───────────────────────────
     "ADANIENT":   {"name":"Adani Enterprises",     "sector":"Conglomerate","keywords":["adani enterprises","adanient","gautam adani"]},
     "ADANIPORTS": {"name":"Adani Ports",           "sector":"Infrastructure","keywords":["adani ports","adaniports"]},
-    "ADANIGREEN": {"name":"Adani Green Energy",    "sector":"Renewables","keywords":["adani green","adanigreen"]},
+    "ADANIGREEN": {"name":"Adani Green Energy",    "sector":"Renewables","keywords":["adani green","adanigreen","adani bravura"]},
     "ADANITRANS": {"name":"Adani Transmission",    "sector":"Power","keywords":["adani transmission","adanitrans"]},
     "AWL":        {"name":"Adani Wilmar",          "sector":"FMCG","keywords":["adani wilmar","awl","fortune oil"]},
-    "ADANIGREEN": {"name":"Adani Green Energy",    "sector":"Conglomerate","keywords":["adani green","adanigreen","adani bravura"]},
 
     # ── AUTOMOBILE ────────────────────────────────────────────
     "MARUTI":     {"name":"Maruti Suzuki",         "sector":"Automobile","keywords":["maruti","maruti suzuki","suzuki india"]},
@@ -413,7 +412,7 @@ STOCK_UNIVERSE = {
     "VEDANT":     {"name":"Vedant Fashions (Manyavar)","sector":"Retail","keywords":["manyavar","vedant fashions","vedant"]},
     "PAGEIND":    {"name":"Page Industries (Jockey)","sector":"Consumer","keywords":["page industries","jockey india","pageind"]},
     "VMART":      {"name":"V-Mart Retail",         "sector":"Retail","keywords":["v-mart","vmart"]},
-    "NYKAA":      {"name":"Nykaa",                 "sector":"Retail","keywords":["nykaa"]},
+    # NYKAA already defined in Tech/Consumer section — not duplicated here
     "RELAXO":     {"name":"Relaxo Footwears",      "sector":"Consumer","keywords":["relaxo","relaxo footwears"]},
     "BATAINDIA":  {"name":"Bata India",            "sector":"Consumer","keywords":["bata india","bataindia"]},
     "VGUARD":     {"name":"V-Guard Industries",    "sector":"Consumer","keywords":["v-guard","vguard"]},

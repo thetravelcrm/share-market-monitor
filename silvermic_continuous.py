@@ -140,6 +140,19 @@ def _compute_rollover_gaps(
     if len(segments) < 2:
         return segments
 
+    # Verify no middle contract was skipped.  If a contract between two
+    # fetched ones is missing, the gap between the surviving pair covers
+    # two rollovers at once — the adjustment is approximate (contango
+    # structure may have shifted), so warn loudly.
+    seg_expiries = [s["contract"]["expiry"] for s in segments]
+    all_expiries = [c["expiry"] for c in contracts
+                    if seg_expiries[0] <= c["expiry"] <= seg_expiries[-1]]
+    if len(seg_expiries) < len(all_expiries):
+        missing = set(all_expiries) - set(seg_expiries)
+        logger.warning("MISSING middle contract(s) with expiry %s — rollover "
+                       "adjustment is approximate; indicators may be inaccurate",
+                       sorted(missing))
+
     # Walk newest→oldest, compute gap at each junction from the 15m data
     for i in range(len(segments) - 1, 0, -1):
         older = segments[i - 1]

@@ -214,6 +214,7 @@ def _htf_filter(
         ema21=round(ema21_v, 2),
         rsi=round(rsi_v, 2),
         close=round(htf_close_v, 2),
+        price_ref=round(price_ref, 2),   # actual price used in price_above_st comparison
     )
 
 
@@ -345,6 +346,7 @@ def _exit_ladder(
 class Trade:
     entry_time: datetime
     entry_price: float
+    entry_atr: float = 0.0          # ATR frozen at entry — used for stop throughout trade
     exit_time: datetime | None = None
     exit_price: float | None = None
     exit_reason: str = ""
@@ -392,7 +394,8 @@ def run_backtest(
         )
 
         if position is not None:
-            ladder = _exit_ladder(position.entry_price, c, atr)
+            # Use ATR frozen at entry — not live ATR which drifts with volatility
+            ladder = _exit_ladder(position.entry_price, c, position.entry_atr)
             # Pine uses process_orders_on_close=true: stop fires on CLOSE, not LOW
             hit_stop = c <= ladder["final_stop"]
 
@@ -407,7 +410,7 @@ def run_backtest(
                 # Pine re-entry: after stop-out, if conditions still met on same bar close,
                 # a new entry fires immediately (process_orders_on_close behaviour).
                 if entry["signal"] == "LONG" and not eod:
-                    position = Trade(entry_time=bar_ts, entry_price=c)
+                    position = Trade(entry_time=bar_ts, entry_price=c, entry_atr=atr)
             elif eod and ladder["profit_rs"] >= BIG_PROFIT:
                 # EOD square-off only if unrealised ≥ bigLockProfit (₹10,000)
                 position.exit_time = bar_ts
@@ -418,7 +421,7 @@ def run_backtest(
                 position = None
         else:
             if entry["signal"] == "LONG" and not eod:
-                position = Trade(entry_time=bar_ts, entry_price=c)
+                position = Trade(entry_time=bar_ts, entry_price=c, entry_atr=atr)
 
     # Close any still-open position at end of data
     if position is not None:
