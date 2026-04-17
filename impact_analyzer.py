@@ -237,6 +237,7 @@ class ImpactResult:
     price_data: Optional[PriceData] = None
     notes: str = ""
     news_type: str = "Ongoing"          # "Breaking" | "Ongoing" | "Rumor"
+    match_reason: str = ""              # e.g. 'keyword: "mcx"' or 'sector peer: AMC/Wealth'
 
 
 def _validate_price_data(current: float, prev: float, day_vol: int, symbol: str,
@@ -505,6 +506,7 @@ def analyze_impact(
             reaction_status=reaction,
             price_data=price_data,
             news_type=getattr(sentiment, "news_type", "Ongoing"),
+            match_reason=getattr(match, "match_reason", ""),
         ))
 
     order = {"EXTREME": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}

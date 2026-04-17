@@ -264,6 +264,7 @@ SECTOR_EMOJI = {
     "FMCG": "🛒", "Infrastructure": "🏗️",
     "Real Estate": "🏠", "Telecom": "📶",
     "Metals/Mining": "🔩",
+    "Exchange": "🏛️",
 }
 
 
@@ -308,25 +309,37 @@ def _render_detail_panel(r, sig=None, all_news=None):
     with col_info:
         # Why this stock was selected
         st.markdown("**🔍 Why Selected**")
-        rel_color = {"positive": "#00ff88", "negative": "#ff4455", "mixed": "#ffaa33"}.get(
-            (r.relation or "").lower(), "#a8b0d0")
+        rel_color = {"Direct": "#00ff88", "Sectoral": "#ffaa33", "Macro": "#a8b0d0"}.get(
+            r.relation or "", "#a8b0d0")
+        reason_txt = getattr(r, "match_reason", "") or ""
+        reason_html = (f" &nbsp;→&nbsp; <span style='color:#6b7280;font-size:11px'>"
+                       f"{reason_txt}</span>" if reason_txt else "")
         st.markdown(
             f"**Sector:** {r.sector} &nbsp;|&nbsp; "
-            f"**Relation:** <span style='color:{rel_color}'>{r.relation or '—'}</span> &nbsp;|&nbsp; "
+            f"**Relation:** <span style='color:{rel_color}'>{r.relation or '—'}</span>"
+            f"{reason_html} &nbsp;|&nbsp; "
             f"**News type:** {r.news_type}",
             unsafe_allow_html=True,
         )
         if r.notes:
             st.caption(r.notes)
 
-        # Triggering news
+        # Triggering news — prioritise Direct, then Sectoral, then Macro
         if all_news:
             st.markdown("**📰 Triggering News**")
-            for item, sent, _ in all_news[:5]:
+            _rel_order = {"Direct": 0, "Sectoral": 1, "Macro": 2}
+            _sorted_news = sorted(all_news,
+                                  key=lambda x: _rel_order.get(getattr(x[2], "relation", "Macro"), 3))
+            for item, sent, imp in _sorted_news[:5]:
                 sent_col = "#00ff88" if "Bullish" in sent.label else (
                     "#ff4455" if "Bearish" in sent.label else "#ffaa33")
+                rel_tag = getattr(imp, "relation", "")
+                rel_badge = (f" <span style='background:#1a3a2a;color:#00ff88;padding:1px 6px;"
+                             f"border-radius:3px;font-size:10px'>{rel_tag}</span>"
+                             if rel_tag else "")
                 st.markdown(
-                    f"<span style='color:{sent_col};font-size:11px'>● {sent.label}</span> "
+                    f"<span style='color:{sent_col};font-size:11px'>● {sent.label}</span>"
+                    f"{rel_badge} "
                     f"<span style='font-size:12px'>{item.title}</span>",
                     unsafe_allow_html=True,
                 )
@@ -605,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.13"
-_APP_BUILD   = "17 Apr 2026 14:25"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.14"
+_APP_BUILD   = "17 Apr 2026 15:17"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1341,7 +1354,7 @@ with tab_signals:
                     f'  <div><span style="color:#6b7280;font-size:11px">CONFIDENCE &nbsp;</span>'
                     f'       {conf_bar_html(sig.confidence)}</div>'
                     f'</div>'
-                    f'<div style="margin-top:8px;font-size:11px;color:#6b7280;font-style:italic">{sig.rationale}</div>'
+                    f'<div style="margin-top:8px;font-size:11px;color:#a8b0d0;line-height:1.6">{sig.rationale.replace(chr(10), "<br>")}</div>'
                     f'<div style="margin-top:6px;font-size:11px;color:#4a5568">'
                     f'  📰 {item.title[:95]}  ·  {item.source}</div>'
                     f'</div>',

@@ -367,52 +367,84 @@ def _time_horizon(result: ImpactResult) -> str:
 # ─────────────────────────────────────────────────────────────
 
 def _build_rationale(result, rr, conf, horizon, edge) -> str:
-    parts = []
-    parts.append(f"{result.impact_strength} impact {result.sentiment_label.lower()} news ({result.relation})")
-    parts.append(f"expected {result.expected_move_pct:+.1f}% vs actual {result.actual_move_pct:+.1f}%")
-    parts.append(f"vol ratio {result.volume_ratio:.1f}x")
-    parts.append(f"R:R {rr:.1f}")
-    parts.append(f"edge: {edge}")
+    lines: list[str] = []
+
+    # ── WHY this stock was selected ──
+    why = f"📌 WHY: {result.impact_strength} impact {result.sentiment_label.lower()} news"
+    if result.relation == "Direct":
+        why += f" directly mentions {result.name}"
+    elif result.relation == "Sectoral":
+        why += f" — sector peer in {result.sector}"
+    elif result.relation == "Macro":
+        why += f" — macro impact on {result.sector}"
+    lines.append(why)
+
+    # ── Edge & Price Action ──
+    edge_line = f"⚡ EDGE: {edge}"
+    edge_line += f" | Expected {result.expected_move_pct:+.1f}% vs Actual {result.actual_move_pct:+.1f}%"
+    edge_line += f" | Vol {result.volume_ratio:.1f}x | R:R {rr:.1f}"
+    lines.append(edge_line)
+
+    # ── Technical Indicators ──
     tech = result.price_data.technical if result.price_data else None
     if tech:
-        parts.append(f"RSI {tech.rsi_14:.0f} ({tech.trend})")
+        # Trend
         regime = getattr(tech, "market_regime", "Unknown")
+        trend_parts = [f"Trend: {tech.trend}"]
         if regime != "Unknown":
-            parts.append(f"regime: {regime}")
-        if tech.near_support:
-            parts.append("near support")
-        if tech.near_resistance:
-            parts.append("near resistance")
-        if tech.bb_squeeze:
-            parts.append("BB squeeze")
+            trend_parts.append(f"Regime: {regime}")
+        st_val = getattr(tech, "supertrend_bullish", None)
+        if st_val is not None:
+            trend_parts.append(f"SuperTrend: {'Bullish ✅' if st_val else 'Bearish ❌'}")
+        lines.append("📊 TREND: " + " | ".join(trend_parts))
+
+        # Momentum indicators
+        mom_parts = [f"RSI: {tech.rsi_14:.0f}"]
         if getattr(tech, "macd_bullish", None) is not None and tech.macd_line != 0.0:
-            parts.append("MACD " + ("bullish" if tech.macd_bullish else "bearish"))
+            mom_parts.append(f"MACD: {'Bullish ✅' if tech.macd_bullish else 'Bearish ❌'}")
         if getattr(tech, "stoch_oversold", False):
-            parts.append(f"Stoch {tech.stoch_k:.0f} oversold")
+            mom_parts.append(f"Stoch: {tech.stoch_k:.0f} (Oversold)")
         elif getattr(tech, "stoch_overbought", False):
-            parts.append(f"Stoch {tech.stoch_k:.0f} overbought")
-        obv = getattr(tech, "obv_trend", "Neutral")
-        if obv in ("Rising", "Falling"):
-            parts.append(f"OBV {obv.lower()}")
-        atr_pct = getattr(tech, "atr_pct", 0.0)
-        if atr_pct > 2.0:
-            parts.append(f"ATR {atr_pct:.1f}% vol")
-        adx_v = getattr(tech, "adx_14", 0.0)
-        if adx_v > 0:
-            parts.append(f"ADX {adx_v:.0f}{'★' if adx_v > 25 else ''}")
-        st = getattr(tech, "supertrend_bullish", None)
-        if st is not None:
-            parts.append("ST " + ("bullish" if st else "bearish"))
+            mom_parts.append(f"Stoch: {tech.stoch_k:.0f} (Overbought)")
         cci_v = getattr(tech, "cci_20", 0.0)
         if getattr(tech, "cci_oversold", False):
-            parts.append(f"CCI {cci_v:.0f} oversold")
+            mom_parts.append(f"CCI: {cci_v:.0f} (Oversold)")
         elif getattr(tech, "cci_overbought", False):
-            parts.append(f"CCI {cci_v:.0f} overbought")
+            mom_parts.append(f"CCI: {cci_v:.0f} (Overbought)")
+        adx_v = getattr(tech, "adx_14", 0.0)
+        if adx_v > 0:
+            strength = "Strong" if adx_v > 25 else "Weak"
+            mom_parts.append(f"ADX: {adx_v:.0f} ({strength})")
+        lines.append("📈 MOMENTUM: " + " | ".join(mom_parts))
+
+        # Volume & Volatility
+        vol_parts = []
+        obv = getattr(tech, "obv_trend", "Neutral")
+        if obv in ("Rising", "Falling"):
+            vol_parts.append(f"OBV: {obv}")
+        atr_pct = getattr(tech, "atr_pct", 0.0)
+        if atr_pct > 0:
+            vol_parts.append(f"ATR: {atr_pct:.1f}%")
+        if getattr(tech, "volume_spike", False):
+            vol_parts.append("Volume Spike ⚠️")
         vwap = getattr(tech, "vwap_5d", 0.0)
         if vwap > 0:
-            parts.append("VWAP " + ("above" if getattr(tech, "price_above_vwap", False) else "below"))
-        if getattr(tech, "volume_spike", False):
-            parts.append("VOL SPIKE")
+            above = getattr(tech, "price_above_vwap", False)
+            vol_parts.append(f"VWAP: {'Above ✅' if above else 'Below ❌'}")
+        if vol_parts:
+            lines.append("📉 VOL/ATR: " + " | ".join(vol_parts))
+
+        # Key levels & patterns
+        level_parts = []
+        if tech.near_support:
+            level_parts.append("Near Support")
+        if tech.near_resistance:
+            level_parts.append("Near Resistance")
+        if tech.bb_squeeze:
+            level_parts.append("BB Squeeze")
         if getattr(tech, "pre_breakout", False):
-            parts.append("PRE-BREAKOUT")
-    return " | ".join(parts)
+            level_parts.append("Pre-Breakout ⚠️")
+        if level_parts:
+            lines.append("🎯 LEVELS: " + " | ".join(level_parts))
+
+    return "\n".join(lines)

@@ -143,8 +143,8 @@ STOCK_UNIVERSE = {
     "ANGELONE":  {"name":"Angel One",           "sector":"AMC/Wealth", "keywords":["angel one","angel-one","angel broking"]},
     "360ONE":    {"name":"360 ONE WAM",         "sector":"AMC/Wealth", "keywords":["360 one","360one"]},
     "CDSL":      {"name":"CDSL",                "sector":"AMC/Wealth", "keywords":["cdsl","central depository services"]},
-    "BSE":       {"name":"BSE Ltd",             "sector":"AMC/Wealth", "keywords":["bse limited","bse ltd"]},
-    "MCX":       {"name":"MCX India",           "sector":"AMC/Wealth", "keywords":["mcx","multi commodity exchange"]},
+    "BSE":       {"name":"BSE Ltd",             "sector":"Exchange", "keywords":["bse limited","bse ltd"]},
+    "MCX":       {"name":"MCX India",           "sector":"Exchange", "keywords":["mcx","multi commodity exchange","commodity exchange"]},
 
     # ── IT / TECHNOLOGY ───────────────────────────────────────
     "TCS":        {"name":"TCS",                   "sector":"IT", "keywords":["tcs","tata consultancy","tata consultancy services"]},
