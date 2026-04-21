@@ -276,51 +276,66 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
     """Internal: actual price fetch without caching."""
     _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
 
-    # ── Try Fyers for NSE stocks (MCX metals use yfinance COMEX+premium below) ──
-    is_mcx_comex = symbol in _MCX_CONV   # metals that need COMEX→MCX conversion
-    if not is_mcx_comex:
-        try:
-            import streamlit as _st
-            _token = _st.session_state.get("fyers_token", "")
-            from fyers_fetcher import get_quote
-            fq = get_quote(symbol, _token) if _token else None
-            if fq:
-                avg_vol = fq["volume"]
-                h52w = fq["high"]; l52w = fq["low"]
-                tech = None
-                is_mcx_sym = symbol in _MCX_SYMBOLS
-                try:
-                    _proxy = _MCX_PROXY.get(symbol, f"{symbol}.NS")
-                    _h = yf.Ticker(_proxy).history(period="60d", interval="1d", auto_adjust=True)
-                    if len(_h) >= 20:
-                        avg_vol = int(_h["Volume"].iloc[-20:].mean())
+    # ── Try Fyers for BOTH NSE stocks AND MCX metals ──────────────────────────
+    # Fyers returns live INR prices for MCX futures directly (no COMEX conversion
+    # needed), whereas yfinance SI=F gives the previous US session close which can
+    # lag the live MCX price by several hours on volatile days.
+    is_mcx_comex = symbol in _MCX_CONV
+    try:
+        import streamlit as _st
+        _token = _st.session_state.get("fyers_token", "")
+        from fyers_fetcher import get_quote
+        fq = get_quote(symbol, _token) if _token else None
+        if fq and fq["last_price"] > 0:
+            avg_vol = fq["volume"]
+            h52w = fq["high"]; l52w = fq["low"]
+            tech = None
+            is_mcx_sym = symbol in _MCX_SYMBOLS
+            try:
+                _proxy = _MCX_PROXY.get(symbol, f"{symbol}.NS")
+                _h = yf.Ticker(_proxy).history(period="60d", interval="1d", auto_adjust=True)
+                if len(_h) >= 20:
+                    avg_vol = int(_h["Volume"].iloc[-20:].mean())
+                    if is_mcx_comex:
+                        # 52w range in INR using same conversion as COMEX fallback
+                        _conv_r = _MCX_CONV[symbol]
+                        _prem_r = _MCX_LOCAL_PREMIUM.get(symbol, 1.0)
+                        _uinr_r = _fetch_usd_inr()
+                        h52w = round(float(_h["High"].max()) * _conv_r * _uinr_r * _prem_r, 2)
+                        l52w = round(float(_h["Low"].min())  * _conv_r * _uinr_r * _prem_r, 2)
+                        # Technicals computed on raw COMEX data — convert Fyers INR price
+                        # back to COMEX equivalent so VWAP comparisons stay consistent
+                        _raw_for_tech = fq["last_price"] / (_conv_r * _uinr_r * _prem_r)
+                        tech = compute_technicals(_h, _raw_for_tech)
+                    else:
                         h52w = float(_h["High"].max())
                         l52w = float(_h["Low"].min())
                         tech = compute_technicals(_h, fq["last_price"])
-                except Exception as exc:
-                    logger.debug("Fyers yfinance supplement failed for %s: %s", symbol, exc)
-                lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, "")) if is_mcx_sym else (1, "")
-                vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
-                if _validate_price_data(fq["last_price"], fq["prev_close"], fq["volume"], symbol):
-                    return PriceData(
-                        symbol=symbol,
-                        current_price=round(fq["last_price"], 2),
-                        prev_close=round(fq["prev_close"], 2),
-                        day_change_pct=fq["change_pct"],
-                        day_volume=fq["volume"],
-                        avg_volume_20d=avg_vol,
-                        volume_ratio=vol_ratio,
-                        high_52w=round(h52w, 2),
-                        low_52w=round(l52w, 2),
-                        market_cap_cr=0,
-                        currency="INR",
-                        technical=tech,
-                        lot_size=lot_s,
-                        lot_unit=lot_u,
-                    )
-                # validation failed — fall through to yfinance
-        except Exception as exc:
-            logger.debug("Fyers quote failed for %s: %s — falling back to yfinance", symbol, exc)
+            except Exception as exc:
+                logger.debug("Fyers yfinance supplement failed for %s: %s", symbol, exc)
+            lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, "")) if is_mcx_sym else (1, "")
+            vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
+            if _validate_price_data(fq["last_price"], fq["prev_close"], fq["volume"], symbol,
+                                    skip_volume=is_mcx_sym):
+                return PriceData(
+                    symbol=symbol,
+                    current_price=round(fq["last_price"], 2),
+                    prev_close=round(fq["prev_close"], 2),
+                    day_change_pct=fq["change_pct"],
+                    day_volume=fq["volume"],
+                    avg_volume_20d=avg_vol,
+                    volume_ratio=vol_ratio,
+                    high_52w=round(h52w, 2),
+                    low_52w=round(l52w, 2),
+                    market_cap_cr=0,
+                    currency="INR",
+                    technical=tech,
+                    lot_size=lot_s,
+                    lot_unit=lot_u,
+                )
+            # validation failed — fall through to yfinance
+    except Exception as exc:
+        logger.debug("Fyers quote failed for %s: %s — falling back to yfinance", symbol, exc)
 
     # ── Resolve ticker symbol ──────────────────────────────────
     is_mcx = symbol in _MCX_PROXY
