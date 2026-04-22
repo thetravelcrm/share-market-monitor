@@ -32,8 +32,24 @@ def prefetch_prices(symbols: list[str]) -> None:
     Batch-download price history for all symbols in a single yfinance request.
     Populates _price_cache so subsequent _fetch_price() calls are instant.
     Silently skips symbols that fail. Call once at the start of a pipeline run.
+
+    MCX COMEX-converted symbols (SILVERMIC, GOLDM, etc.) are excluded from the
+    yfinance batch when a Fyers token is available.  yfinance gives the previous
+    US session close for SI=F which can lag the live MCX price by several hours.
+    These symbols are fetched individually by _fetch_price_uncached via Fyers.
     """
     now = time.time()
+
+    # Skip MCX COMEX symbols when Fyers is connected — live INR prices come from Fyers
+    _fyers_available = False
+    try:
+        import streamlit as _st
+        _fyers_available = bool(_st.session_state.get("fyers_token", ""))
+    except Exception:
+        pass
+    if _fyers_available:
+        symbols = [s for s in symbols if s not in _MCX_CONV]
+
     # Only fetch symbols not already in cache
     to_fetch = [s for s in symbols
                 if s not in _price_cache or (now - _price_cache[s][0]) >= _PRICE_CACHE_TTL]
