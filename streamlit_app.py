@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.18"
-_APP_BUILD   = "24 Apr 2026 14:24"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.19"
+_APP_BUILD   = "24 Apr 2026 14:40"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2227,7 +2227,6 @@ with tab_history:
 #  TAB 11  —  🥈 SILVERMIC  (VWAP + EMA9/21 + SuperTrend MTF)
 # ───────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300, show_spinner=False)
 # ── SILVERMIC config persistence ────────────────────────────────
 import json as _sm_json, os as _sm_os
 
@@ -2236,7 +2235,8 @@ _SM_CONFIG_DEFAULTS = {
     "rsi_entry_min": 52.0,
     "ema_spread_min": 0.09,
     "rsi_bull_level": 50.0,
-    "slack_webhook_url": "",
+    "slack_bot_token": "",
+    "slack_channel": "#general",
 }
 
 def _sm_config_load() -> dict:
@@ -2313,20 +2313,31 @@ with tab_silvermic:
                     help="1H RSI must exceed this for HTF bull filter",
                 )
             st.divider()
-            _new_webhook = st.text_input(
-                "Slack Webhook URL",
-                value=_sm_cfg.get("slack_webhook_url", ""),
-                type="password",
-                key="sm_slack_webhook",
-                placeholder="https://hooks.slack.com/services/...",
-                help="Alert fires on LONG SETUP signal transition",
-            )
+            _col_d, _col_e = st.columns([3, 1])
+            with _col_d:
+                _new_bot_token = st.text_input(
+                    "Slack Bot Token",
+                    value=_sm_cfg.get("slack_bot_token", ""),
+                    type="password",
+                    key="sm_slack_token",
+                    placeholder="xoxb-...",
+                    help="Bot User OAuth Token from Slack app settings",
+                )
+            with _col_e:
+                _new_channel = st.text_input(
+                    "Channel",
+                    value=_sm_cfg.get("slack_channel", "#general"),
+                    key="sm_slack_channel",
+                    placeholder="#general",
+                    help="Slack channel to post alerts",
+                )
             if st.button("💾 Save Settings", key="sm_save_cfg"):
                 _sm_cfg.update({
-                    "rsi_entry_min":    _new_rsi_entry,
-                    "ema_spread_min":   _new_ema_spread,
-                    "rsi_bull_level":   _new_rsi_bull,
-                    "slack_webhook_url": _new_webhook,
+                    "rsi_entry_min":  _new_rsi_entry,
+                    "ema_spread_min": _new_ema_spread,
+                    "rsi_bull_level": _new_rsi_bull,
+                    "slack_bot_token": _new_bot_token,
+                    "slack_channel":  _new_channel,
                 })
                 st.session_state["sm_cfg"] = _sm_cfg
                 _sm_config_save(_sm_cfg)
@@ -2347,14 +2358,15 @@ with tab_silvermic:
             _ago  = int((datetime.now(timezone.utc) - _sm_result.fetched_at).total_seconds() / 60)
 
             # ── Slack alert on WAIT → LONG transition ────────────────
-            _sm_webhook = _sm_cfg.get("slack_webhook_url", "")
+            _sm_bot_token = _sm_cfg.get("slack_bot_token", "")
+            _sm_channel   = _sm_cfg.get("slack_channel", "#general")
             _sm_prev_signal = st.session_state.get("sm_prev_signal", "WAIT")
-            if _sm_webhook and _sig == "LONG" and _sm_prev_signal != "LONG":
+            if _sm_bot_token and _sig == "LONG" and _sm_prev_signal != "LONG":
                 try:
                     from notifier import send_slack_alert
                     _nv_alert = _sm_result.news_verdict or {}
                     _insights = _nv_alert.get("top_insights", [])
-                    send_slack_alert(_sm_webhook, {
+                    send_slack_alert(_sm_bot_token, _sm_channel, {
                         "entry":         _ent.get("entry_price", 0),
                         "stop_loss":     _ent.get("stop_loss", 0),
                         "news_score":    _nv_alert.get("score", "N/A"),

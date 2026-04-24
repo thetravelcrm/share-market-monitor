@@ -1,5 +1,5 @@
 """
-notifier.py — Send trade alerts via Slack Incoming Webhook.
+notifier.py — Send trade alerts via Slack Bot API (chat.postMessage).
 """
 from __future__ import annotations
 import logging
@@ -7,17 +7,21 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+_SLACK_API = "https://slack.com/api/chat.postMessage"
 
-def send_slack_alert(webhook_url: str, payload: dict) -> bool:
+
+def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
     """
-    Post a formatted Slack message when SILVERMIC LONG SETUP fires.
+    Post a formatted Slack message using a Bot OAuth Token.
 
+    bot_token: xoxb-... token from Slack app settings
+    channel:   "#general" or channel ID like "C01234ABCD"
     payload keys: entry, stop_loss, news_score, news_label,
                   news_decision, top_insight
     Returns True on success.
     """
-    if not webhook_url or not webhook_url.startswith("https://hooks.slack.com/"):
-        logger.warning("Invalid Slack webhook URL — alert skipped")
+    if not bot_token or not bot_token.startswith("xoxb-"):
+        logger.warning("Invalid Slack bot token — alert skipped")
         return False
 
     entry = payload.get("entry", 0)
@@ -57,11 +61,17 @@ def send_slack_alert(webhook_url: str, payload: dict) -> bool:
     ]
 
     try:
-        resp = requests.post(webhook_url, json={"blocks": blocks}, timeout=8)
-        if resp.status_code == 200:
-            logger.info("Slack alert sent successfully")
+        resp = requests.post(
+            _SLACK_API,
+            headers={"Authorization": f"Bearer {bot_token}"},
+            json={"channel": channel, "blocks": blocks},
+            timeout=8,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            logger.info("Slack alert sent to %s", channel)
             return True
-        logger.warning("Slack alert failed: %s %s", resp.status_code, resp.text)
+        logger.warning("Slack alert failed: %s", data.get("error", "unknown"))
         return False
     except Exception as e:
         logger.warning("Slack alert exception: %s", e)
