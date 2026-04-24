@@ -476,7 +476,12 @@ class SilverMicResult:
     news_verdict: dict | None = None         # Silver news intelligence verdict
 
 
-def analyze(access_token: str) -> SilverMicResult:
+def analyze(
+    access_token: str,
+    rsi_entry_min: float = RSI_ENTRY_MIN,
+    ema_spread_min: float = EMA_SPREAD_MIN,
+    rsi_bull_min: float = RSI_BULL_LEVEL,
+) -> SilverMicResult:
     """
     Fetch live bars and return current signal state.
 
@@ -500,8 +505,10 @@ def analyze(access_token: str) -> SilverMicResult:
         raise RuntimeError("Insufficient data — check Fyers token")
 
     live_price = float(df_15m["Close"].iloc[-1])
-    htf = _htf_filter(df_1h, current_price=live_price)
-    ent = _entry_conditions(df_15m, htf["htf_bull"])
+    htf = _htf_filter(df_1h, current_price=live_price, rsi_bull_min=rsi_bull_min)
+    ent = _entry_conditions(df_15m, htf["htf_bull"],
+                            rsi_entry_min=rsi_entry_min,
+                            ema_spread_min=ema_spread_min)
 
     # ── News intelligence gate (non-blocking) ────────────────
     news_verdict = None

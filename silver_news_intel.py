@@ -298,15 +298,25 @@ def get_silver_verdict(hours_back: int = 12) -> SilverNewsVerdict:
     # Map -1..+1 → 0..10 (5.0 = neutral)
     compound_score = round(max(0.0, min(10.0, 5.0 + raw * 5.0)), 1)
 
-    label, decision = _classify_verdict(compound_score)
-
-    # Confidence: based on article count + consistency
+    # Bullish/bearish counts needed for conflict check and confidence
     directions = [s["silver_direction"] for s in scored]
     bullish_count = sum(1 for d in directions if d > 0.05)
     bearish_count = sum(1 for d in directions if d < -0.05)
     total_dir = bullish_count + bearish_count
     consistency = max(bullish_count, bearish_count) / total_dir if total_dir > 0 else 0.5
 
+    label, decision = _classify_verdict(compound_score)
+
+    # If news is genuinely conflicted, CONFIRMED is misleading — downgrade to WAIT
+    _is_conflicting = (
+        bullish_count > 0 and bearish_count > 0
+        and min(bullish_count, bearish_count) / max(bullish_count, bearish_count) > 0.4
+    )
+    if _is_conflicting and decision == "CONFIRMED":
+        decision = "WAIT"
+        label = label + " (Mixed)"
+
+    # Confidence: based on article count + consistency
     # More articles + higher consistency = higher confidence
     count_factor = min(1.0, len(silver_news) / 5.0)  # saturates at 5 articles
     confidence = round(min(10.0, (consistency * 6 + count_factor * 4)), 1)
@@ -318,10 +328,8 @@ def get_silver_verdict(hours_back: int = 12) -> SilverNewsVerdict:
     # Risk flags
     risk_flags: list[str] = []
 
-    if bullish_count > 0 and bearish_count > 0:
-        ratio = min(bullish_count, bearish_count) / max(bullish_count, bearish_count)
-        if ratio > 0.4:
-            risk_flags.append("Conflicting news — mixed signals, proceed with caution")
+    if _is_conflicting:
+        risk_flags.append("Conflicting news — mixed signals, proceed with caution")
 
     avg_age_hours = sum(
         (datetime.now(timezone.utc) - s["published"]).total_seconds() / 3600

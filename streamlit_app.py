@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.17"
-_APP_BUILD   = "22 Apr 2026 11:43"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.18"
+_APP_BUILD   = "24 Apr 2026 14:24"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2228,9 +2228,42 @@ with tab_history:
 # ───────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300, show_spinner=False)
+# ── SILVERMIC config persistence ────────────────────────────────
+import json as _sm_json, os as _sm_os
+
+_SM_CONFIG_PATH = _sm_os.path.join(_sm_os.path.dirname(__file__), ".silvermic_config.json")
+_SM_CONFIG_DEFAULTS = {
+    "rsi_entry_min": 52.0,
+    "ema_spread_min": 0.09,
+    "rsi_bull_level": 50.0,
+    "slack_webhook_url": "",
+}
+
+def _sm_config_load() -> dict:
+    try:
+        with open(_SM_CONFIG_PATH) as _f:
+            data = _sm_json.load(_f)
+        return {**_SM_CONFIG_DEFAULTS, **data}
+    except Exception:
+        return dict(_SM_CONFIG_DEFAULTS)
+
+def _sm_config_save(cfg: dict) -> None:
+    try:
+        with open(_SM_CONFIG_PATH, "w") as _f:
+            _sm_json.dump(cfg, _f, indent=2)
+    except Exception:
+        pass
+
+
 def _sm_live(token: str):
     from silvermic_strategy import analyze
-    return analyze(token)
+    cfg = st.session_state.get("sm_cfg", _SM_CONFIG_DEFAULTS)
+    return analyze(
+        token,
+        rsi_entry_min=cfg.get("rsi_entry_min", 52.0),
+        ema_spread_min=cfg.get("ema_spread_min", 0.09),
+        rsi_bull_min=cfg.get("rsi_bull_level", 50.0),
+    )
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2249,7 +2282,56 @@ with tab_silvermic:
     if not _sm_ready:
         st.warning("Connect your Fyers account (sidebar) to use this strategy.")
 
+    # Load persisted thresholds into session_state (once per session)
+    if "sm_cfg" not in st.session_state:
+        st.session_state["sm_cfg"] = _sm_config_load()
+    _sm_cfg = st.session_state["sm_cfg"]
+
     if _sm_ready:
+        # ── Settings expander ────────────────────────────────────────
+        with st.expander("⚙️ Signal Thresholds", expanded=False):
+            _col_a, _col_b, _col_c = st.columns(3)
+            with _col_a:
+                _new_rsi_entry = st.number_input(
+                    "RSI Entry Min (15m)", min_value=40.0, max_value=70.0,
+                    value=float(_sm_cfg["rsi_entry_min"]), step=0.5,
+                    key="sm_rsi_entry",
+                    help="15m RSI must exceed this to confirm entry",
+                )
+            with _col_b:
+                _new_ema_spread = st.number_input(
+                    "EMA Spread Min %", min_value=0.01, max_value=1.0,
+                    value=float(_sm_cfg["ema_spread_min"]), step=0.01, format="%.2f",
+                    key="sm_ema_spread",
+                    help="Minimum EMA9-EMA21 spread for trend strength",
+                )
+            with _col_c:
+                _new_rsi_bull = st.number_input(
+                    "RSI Bull Level (1H)", min_value=40.0, max_value=65.0,
+                    value=float(_sm_cfg["rsi_bull_level"]), step=0.5,
+                    key="sm_rsi_bull",
+                    help="1H RSI must exceed this for HTF bull filter",
+                )
+            st.divider()
+            _new_webhook = st.text_input(
+                "Slack Webhook URL",
+                value=_sm_cfg.get("slack_webhook_url", ""),
+                type="password",
+                key="sm_slack_webhook",
+                placeholder="https://hooks.slack.com/services/...",
+                help="Alert fires on LONG SETUP signal transition",
+            )
+            if st.button("💾 Save Settings", key="sm_save_cfg"):
+                _sm_cfg.update({
+                    "rsi_entry_min":    _new_rsi_entry,
+                    "ema_spread_min":   _new_ema_spread,
+                    "rsi_bull_level":   _new_rsi_bull,
+                    "slack_webhook_url": _new_webhook,
+                })
+                st.session_state["sm_cfg"] = _sm_cfg
+                _sm_config_save(_sm_cfg)
+                st.success("Settings saved.")
+
         # ── Live signal ──────────────────────────────────────────────
         _sm_col_refresh, _sm_col_ts = st.columns([1, 4])
         with _sm_col_refresh:
@@ -2263,6 +2345,26 @@ with tab_silvermic:
             _ent  = _sm_result.entry
             _sig  = _sm_result.signal
             _ago  = int((datetime.now(timezone.utc) - _sm_result.fetched_at).total_seconds() / 60)
+
+            # ── Slack alert on WAIT → LONG transition ────────────────
+            _sm_webhook = _sm_cfg.get("slack_webhook_url", "")
+            _sm_prev_signal = st.session_state.get("sm_prev_signal", "WAIT")
+            if _sm_webhook and _sig == "LONG" and _sm_prev_signal != "LONG":
+                try:
+                    from notifier import send_slack_alert
+                    _nv_alert = _sm_result.news_verdict or {}
+                    _insights = _nv_alert.get("top_insights", [])
+                    send_slack_alert(_sm_webhook, {
+                        "entry":         _ent.get("entry_price", 0),
+                        "stop_loss":     _ent.get("stop_loss", 0),
+                        "news_score":    _nv_alert.get("score", "N/A"),
+                        "news_label":    _nv_alert.get("label", "N/A"),
+                        "news_decision": _nv_alert.get("decision", "N/A"),
+                        "top_insight":   _insights[0] if _insights else "N/A",
+                    })
+                except Exception:
+                    pass
+            st.session_state["sm_prev_signal"] = _sig
 
             with _sm_col_ts:
                 st.caption(f"Last updated: {_ago}m ago")
@@ -2287,7 +2389,7 @@ with tab_silvermic:
             _sm_tile(_sm_c1, "Price > ST",    _htf["price_above_st"], f"₹{_htf['price_ref']:,.0f} vs ₹{_htf['st_line']:,.0f}")
             _sm_tile(_sm_c2, "ST Bullish",    _htf["st_bullish"],     "Bullish" if _htf["st_bullish"] else "Bearish")
             _sm_tile(_sm_c3, "EMA9 > EMA21",  _htf["ema_bull"],       f"₹{_htf['ema9']:,.0f} vs ₹{_htf['ema21']:,.0f}")
-            _sm_tile(_sm_c4, "RSI > 50",      _htf["rsi_bull"],       f"RSI {_htf['rsi']:.1f}")
+            _sm_tile(_sm_c4, f"RSI > {_sm_cfg['rsi_bull_level']:.0f}", _htf["rsi_bull"], f"RSI {_htf['rsi']:.1f}")
 
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2312,10 +2414,10 @@ with tab_silvermic:
                 _sm_check("HTF Bull (1H)",      _htf["htf_bull"],       "1H OK" if _htf["htf_bull"] else "1H Weak")
                 _sm_check("Above VWAP",         _ent["above_vwap"],     f"₹{_ent['close']:,.0f} vs ₹{_ent['vwap']:,.0f}")
                 _sm_check("EMA9 > EMA21 (15m)", _ent["ema_above"],      f"₹{_ent['ema9']:,.0f} vs ₹{_ent['ema21']:,.0f}")
-                _sm_check("RSI > 52",           _ent["rsi_ok"],         f"RSI {_ent['rsi']:.1f}")
+                _sm_check(f"RSI > {_sm_cfg['rsi_entry_min']:.0f}", _ent["rsi_ok"], f"RSI {_ent['rsi']:.1f}")
                 _sm_check("Bullish Candle",      _ent["bull_candle"],    "")
                 _sm_check("Pullback to EMA Zone", _ent["pullback"],      "")
-                _sm_check("EMA Spread ≥ 0.09%",  _ent["strong_trend"],  f"{_ent['spread_pct']:.3f}%")
+                _sm_check(f"EMA Spread ≥ {_sm_cfg['ema_spread_min']:.2f}%", _ent["strong_trend"], f"{_ent['spread_pct']:.3f}%")
 
             with _sm_right:
                 # Combined signal state: technical + news
