@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.19"
-_APP_BUILD   = "24 Apr 2026 14:40"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.21"
+_APP_BUILD   = "24 Apr 2026 14:50"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2331,17 +2331,40 @@ with tab_silvermic:
                     placeholder="#general",
                     help="Slack channel to post alerts",
                 )
-            if st.button("💾 Save Settings", key="sm_save_cfg"):
-                _sm_cfg.update({
-                    "rsi_entry_min":  _new_rsi_entry,
-                    "ema_spread_min": _new_ema_spread,
-                    "rsi_bull_level": _new_rsi_bull,
-                    "slack_bot_token": _new_bot_token,
-                    "slack_channel":  _new_channel,
-                })
-                st.session_state["sm_cfg"] = _sm_cfg
-                _sm_config_save(_sm_cfg)
-                st.success("Settings saved.")
+            _btn_save, _btn_test = st.columns([2, 1])
+            with _btn_save:
+                if st.button("💾 Save Settings", key="sm_save_cfg"):
+                    _sm_cfg.update({
+                        "rsi_entry_min":  _new_rsi_entry,
+                        "ema_spread_min": _new_ema_spread,
+                        "rsi_bull_level": _new_rsi_bull,
+                        "slack_bot_token": _new_bot_token,
+                        "slack_channel":  _new_channel,
+                    })
+                    st.session_state["sm_cfg"] = _sm_cfg
+                    _sm_config_save(_sm_cfg)
+                    st.success("Settings saved.")
+            with _btn_test:
+                if st.button("📨 Test Alert", key="sm_test_alert"):
+                    _t_token = _new_bot_token or _sm_cfg.get("slack_bot_token", "")
+                    _t_chan  = _new_channel  or _sm_cfg.get("slack_channel", "#general")
+                    if not _t_token:
+                        st.error("Enter Slack Bot Token first.")
+                    else:
+                        try:
+                            from notifier import send_slack_alert
+                            _ok = send_slack_alert(_t_token, _t_chan, {
+                                "entry": 246500, "stop_loss": 244000,
+                                "news_score": 7.5, "news_label": "Bullish",
+                                "news_decision": "CONFIRMED",
+                                "top_insight": "Test alert — SILVERMIC LONG SETUP is working",
+                            })
+                            if _ok:
+                                st.success(f"✅ Test message sent to {_t_chan}")
+                            else:
+                                st.error("❌ Failed — check token and invite @demo_app to the channel")
+                        except Exception as _te:
+                            st.error(f"❌ Error: {_te}")
 
         # ── Live signal ──────────────────────────────────────────────
         _sm_col_refresh, _sm_col_ts = st.columns([1, 4])

@@ -1,7 +1,0 @@
-{
-  "rsi_entry_min": 52.0,
-  "ema_spread_min": 0.09,
-  "rsi_bull_level": 50.0,
-  "slack_bot_token": "",
-  "slack_channel": "#general"
-}

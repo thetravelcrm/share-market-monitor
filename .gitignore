@@ -2,6 +2,7 @@
 .streamlit/secrets.toml
 *.fyers_session.json
 .fyers_session.json
+.silvermic_config.json
 
 # Python
 __pycache__/
