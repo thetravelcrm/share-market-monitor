@@ -27,6 +27,9 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
     entry = payload.get("entry", 0)
     sl    = payload.get("stop_loss", 0)
     risk  = round(entry - sl, 0) if entry and sl else "N/A"
+    t1    = payload.get("t1", round(entry + 1500, 0))
+    t2    = payload.get("t2", round(entry + 4000, 0))
+    t3    = payload.get("t3", round(entry + 11000, 0))
 
     blocks = [
         {
@@ -40,6 +43,15 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
                 {"type": "mrkdwn", "text": f"*Stop Loss*\n₹{sl:,.0f}"},
                 {"type": "mrkdwn", "text": f"*Risk/Lot*\n₹{risk:,.0f}"},
                 {"type": "mrkdwn", "text": f"*News Score*\n{payload.get('news_score', 'N/A')}/10 — {payload.get('news_label', '')}"},
+            ],
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*T1 (Cushion)*\n₹{t1:,.0f}  (+₹1,500)"},
+                {"type": "mrkdwn", "text": f"*T2 (Mid)*\n₹{t2:,.0f}  (+₹4,000)"},
+                {"type": "mrkdwn", "text": f"*T3 (Big)*\n₹{t3:,.0f}  (+₹11,000)"},
+                {"type": "mrkdwn", "text": f"*R:R (T1)*\n1:{round((t1-entry)/max(entry-sl,1),1)}"},
             ],
         },
         {

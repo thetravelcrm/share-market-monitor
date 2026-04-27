@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.21"
-_APP_BUILD   = "24 Apr 2026 14:50"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.22"
+_APP_BUILD   = "27 Apr 2026 11:16"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2240,12 +2240,25 @@ _SM_CONFIG_DEFAULTS = {
 }
 
 def _sm_config_load() -> dict:
+    # Try local file first (works when running locally)
     try:
         with open(_SM_CONFIG_PATH) as _f:
             data = _sm_json.load(_f)
         return {**_SM_CONFIG_DEFAULTS, **data}
     except Exception:
-        return dict(_SM_CONFIG_DEFAULTS)
+        pass
+    # Fallback: read from Streamlit Cloud secrets
+    cfg = dict(_SM_CONFIG_DEFAULTS)
+    try:
+        _sec = st.secrets
+        cfg["slack_bot_token"] = _sec.get("SLACK_BOT_TOKEN", "")
+        cfg["slack_channel"]   = _sec.get("SLACK_CHANNEL", "#general")
+        cfg["rsi_entry_min"]   = float(_sec.get("SM_RSI_ENTRY_MIN", 52.0))
+        cfg["ema_spread_min"]  = float(_sec.get("SM_EMA_SPREAD_MIN", 0.09))
+        cfg["rsi_bull_level"]  = float(_sec.get("SM_RSI_BULL_LEVEL", 50.0))
+    except Exception:
+        pass
+    return cfg
 
 def _sm_config_save(cfg: dict) -> None:
     try:
@@ -2380,18 +2393,30 @@ with tab_silvermic:
             _sig  = _sm_result.signal
             _ago  = int((datetime.now(timezone.utc) - _sm_result.fetched_at).total_seconds() / 60)
 
-            # ── Slack alert on WAIT → LONG transition ────────────────
-            _sm_bot_token = _sm_cfg.get("slack_bot_token", "")
-            _sm_channel   = _sm_cfg.get("slack_channel", "#general")
+            # ── Slack alert: WAIT → LONG transition AND news CONFIRMED ──
+            _sm_bot_token   = _sm_cfg.get("slack_bot_token", "")
+            _sm_channel     = _sm_cfg.get("slack_channel", "#general")
             _sm_prev_signal = st.session_state.get("sm_prev_signal", "WAIT")
-            if _sm_bot_token and _sig == "LONG" and _sm_prev_signal != "LONG":
+            _nv_alert       = _sm_result.news_verdict or {}
+            _alert_decision = _nv_alert.get("decision")  # None if no news data
+            # Only alert when news is CONFIRMED (or no news data at all)
+            _should_alert = (
+                _sm_bot_token
+                and _sig == "LONG"
+                and _sm_prev_signal != "LONG"
+                and _alert_decision in ("CONFIRMED", None)
+            )
+            if _should_alert:
                 try:
                     from notifier import send_slack_alert
-                    _nv_alert = _sm_result.news_verdict or {}
-                    _insights = _nv_alert.get("top_insights", [])
+                    _insights  = _nv_alert.get("top_insights", [])
+                    _ep        = _ent.get("entry_price", 0)
                     send_slack_alert(_sm_bot_token, _sm_channel, {
-                        "entry":         _ent.get("entry_price", 0),
+                        "entry":         _ep,
                         "stop_loss":     _ent.get("stop_loss", 0),
+                        "t1":            round(_ep + 1500, 0),
+                        "t2":            round(_ep + 4000, 0),
+                        "t3":            round(_ep + 11000, 0),
                         "news_score":    _nv_alert.get("score", "N/A"),
                         "news_label":    _nv_alert.get("label", "N/A"),
                         "news_decision": _nv_alert.get("decision", "N/A"),
