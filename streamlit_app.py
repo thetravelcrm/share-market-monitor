@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.24"
-_APP_BUILD   = "27 Apr 2026 14:28"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.25"
+_APP_BUILD   = "27 Apr 2026 14:39"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2426,6 +2426,48 @@ with tab_silvermic:
                                 st.error("❌ Failed — check token and invite @demo_app to the channel")
                         except Exception as _te:
                             st.error(f"❌ Error: {_te}")
+
+        # ── Manual trade entry ───────────────────────────────────────
+        with st.expander("📝 Record Trade Entry", expanded=False):
+            _cur_trade = st.session_state.get("sm_active_trade", _sm_trade_load())
+            if _cur_trade.get("active"):
+                st.info(
+                    f"Active trade already recorded — entry ₹{_cur_trade['entry_price']:,.0f}. "
+                    "Use 📤 Manual Exit in the Trade Status panel to close it first."
+                )
+            else:
+                _me_col1, _me_col2 = st.columns(2)
+                with _me_col1:
+                    _me_entry = st.number_input(
+                        "Entry Price (₹)", min_value=0.0, value=247500.0,
+                        step=100.0, key="me_entry_price",
+                    )
+                    _me_date = st.date_input(
+                        "Entry Date", key="me_entry_date",
+                    )
+                with _me_col2:
+                    _me_stop = st.number_input(
+                        "Stop Loss (₹)", min_value=0.0, value=245277.0,
+                        step=100.0, key="me_stop_price",
+                    )
+                    _me_time = st.time_input(
+                        "Entry Time (IST)", key="me_entry_time",
+                        value=__import__("datetime").time(21, 0),
+                    )
+                if st.button("✅ Record Entry", key="me_record_btn"):
+                    import datetime as _dt_mod
+                    _naive_ist = _dt_mod.datetime.combine(_me_date, _me_time)
+                    _entry_utc = (_naive_ist - _dt_mod.timedelta(hours=5, minutes=30)).isoformat() + "+00:00"
+                    _manual_trade = {
+                        "active":      True,
+                        "entry_price": float(_me_entry),
+                        "entry_time":  _entry_utc,
+                        "entry_stop":  float(_me_stop),
+                    }
+                    _sm_trade_save(_manual_trade)
+                    st.session_state["sm_active_trade"] = _manual_trade
+                    st.success(f"Trade recorded — entry ₹{_me_entry:,.0f}, stop ₹{_me_stop:,.0f}")
+                    st.rerun()
 
         # ── Live signal ──────────────────────────────────────────────
         _sm_col_refresh, _sm_col_ts = st.columns([1, 4])
