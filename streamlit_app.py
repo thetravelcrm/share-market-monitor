@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.23"
-_APP_BUILD   = "27 Apr 2026 11:51"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.24"
+_APP_BUILD   = "27 Apr 2026 14:28"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2670,6 +2670,7 @@ with tab_silvermic:
             _trade_state = st.session_state.get("sm_active_trade", {})
             _ladder_now  = st.session_state.get("sm_ladder")
 
+            st.markdown("#### 📊 Trade Status")
             if _trade_state.get("active") and _ladder_now:
                 _tp        = _trade_state["entry_price"]
                 _fstop_now = _ladder_now["final_stop"]
@@ -2685,7 +2686,7 @@ with tab_silvermic:
                     pass
                 st.markdown(
                     f"<div style='background:#0a1628;border:1px solid #f59e0b;"
-                    f"border-radius:10px;padding:16px;margin:12px 0'>"
+                    f"border-radius:10px;padding:16px;margin:4px 0 12px 0'>"
                     f"<div style='color:#f59e0b;font-weight:700;font-size:13px;margin-bottom:10px'>"
                     f"🔴 TRADE ACTIVE — entered {_entry_ist}</div>"
                     f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"
@@ -2707,6 +2708,14 @@ with tab_silvermic:
                     st.session_state["sm_active_trade"] = dict(_SM_TRADE_DEFAULT)
                     st.session_state["sm_prev_signal"]  = "WAIT"
                     st.rerun()
+            else:
+                st.markdown(
+                    "<div style='background:#0d1117;border:1px solid #21262d;"
+                    "border-radius:10px;padding:14px 16px;margin:4px 0 12px 0;"
+                    "color:#6b7280;font-size:13px'>"
+                    "⚪ No active trade — waiting for LONG SETUP signal</div>",
+                    unsafe_allow_html=True,
+                )
 
             # ── Section 2.5: News Confirmation Panel ─────────────────
             st.markdown("#### 🧠 News Confirmation")
