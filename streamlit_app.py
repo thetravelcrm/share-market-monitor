@@ -618,8 +618,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.22"
-_APP_BUILD   = "27 Apr 2026 11:16"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.23"
+_APP_BUILD   = "27 Apr 2026 11:51"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2268,6 +2268,54 @@ def _sm_config_save(cfg: dict) -> None:
         pass
 
 
+# ── SILVERMIC trade state persistence ──────────────────────────
+_SM_TRADE_PATH   = _sm_os.path.join(_sm_os.path.dirname(__file__), "silvermic_active_trade.json")
+_SM_HISTORY_PATH = _sm_os.path.join(_sm_os.path.dirname(__file__), "silvermic_trade_history.json")
+_SM_TRADE_DEFAULT = {"active": False, "entry_price": 0, "entry_time": "", "entry_stop": 0}
+
+
+def _sm_trade_load() -> dict:
+    try:
+        with open(_SM_TRADE_PATH) as _f:
+            return _sm_json.load(_f)
+    except Exception:
+        return dict(_SM_TRADE_DEFAULT)
+
+
+def _sm_trade_save(trade: dict) -> None:
+    try:
+        with open(_SM_TRADE_PATH, "w") as _f:
+            _sm_json.dump(trade, _f, indent=2)
+    except Exception:
+        pass
+
+
+def _sm_trade_close(entry: dict, exit_price: float, exit_reason: str, final_stop: float) -> None:
+    """Move active trade to history and clear active trade file."""
+    record = {
+        "entry_time":  entry.get("entry_time", ""),
+        "entry_price": entry.get("entry_price", 0),
+        "entry_stop":  entry.get("entry_stop", 0),
+        "exit_time":   datetime.now(timezone.utc).isoformat(),
+        "exit_price":  round(exit_price, 2),
+        "exit_reason": exit_reason,
+        "pnl_rs":      round(exit_price - entry.get("entry_price", 0), 2),
+        "final_stop":  round(final_stop, 2),
+    }
+    try:
+        with open(_SM_HISTORY_PATH) as _f:
+            history = _sm_json.load(_f)
+    except Exception:
+        history = []
+    history.append(record)
+    try:
+        with open(_SM_HISTORY_PATH, "w") as _f:
+            _sm_json.dump(history, _f, indent=2)
+    except Exception:
+        pass
+    _sm_trade_save(dict(_SM_TRADE_DEFAULT))
+
+
 def _sm_live(token: str):
     from silvermic_strategy import analyze
     cfg = st.session_state.get("sm_cfg", _SM_CONFIG_DEFAULTS)
@@ -2426,6 +2474,74 @@ with tab_silvermic:
                     pass
             st.session_state["sm_prev_signal"] = _sig
 
+            # ── Auto-record entry when LONG signal fires ──────────────
+            if "sm_active_trade" not in st.session_state:
+                st.session_state["sm_active_trade"] = _sm_trade_load()
+            _active = st.session_state["sm_active_trade"]
+
+            if _sig == "LONG" and not _active.get("active"):
+                _new_trade = {
+                    "active":      True,
+                    "entry_price": _ent.get("entry_price", 0),
+                    "entry_time":  datetime.now(timezone.utc).isoformat(),
+                    "entry_stop":  _ent.get("stop_loss", 0),
+                }
+                _sm_trade_save(_new_trade)
+                st.session_state["sm_active_trade"] = _new_trade
+                _active = _new_trade
+
+            # ── Exit detection (runs on every refresh when trade open) ─
+            if _active.get("active"):
+                from silvermic_strategy import _exit_ladder as _sm_exit_ladder, \
+                    FLAT_HOUR as _SM_FLAT_H, FLAT_MINUTE as _SM_FLAT_M, \
+                    BIG_PROFIT as _SM_BIG_PROFIT
+
+                _ep      = _active["entry_price"]
+                _cur     = float(_ent["close"])
+                _cur_atr = float(_ent["atr"])
+                _ladder  = _sm_exit_ladder(_ep, _cur, _cur_atr)
+                _fstop   = _ladder["final_stop"]
+                _level   = _ladder["level"]
+                _pnl     = _ladder["profit_rs"]
+
+                _stop_hit = _cur < _fstop
+                _ist_now  = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+                _eod_hit  = (
+                    (_ist_now.hour > _SM_FLAT_H)
+                    or (_ist_now.hour == _SM_FLAT_H and _ist_now.minute >= _SM_FLAT_M)
+                ) and _pnl >= _SM_BIG_PROFIT
+
+                _exit_reason = None
+                if _stop_hit:
+                    _exit_reason = f"Stop hit — {_level}"
+                elif _eod_hit:
+                    _exit_reason = "EOD profit square-off"
+
+                if _exit_reason:
+                    _ex_tok = _sm_cfg.get("slack_bot_token", "")
+                    _ex_ch  = _sm_cfg.get("slack_channel", "#general")
+                    if _ex_tok:
+                        try:
+                            from notifier import send_slack_exit_alert
+                            send_slack_exit_alert(_ex_tok, _ex_ch, {
+                                "entry_price": _ep,
+                                "exit_price":  _cur,
+                                "pnl_rs":      _pnl,
+                                "exit_reason": _exit_reason,
+                                "final_stop":  _fstop,
+                            })
+                        except Exception:
+                            pass
+                    _sm_trade_close(_active, _cur, _exit_reason, _fstop)
+                    st.session_state["sm_active_trade"] = dict(_SM_TRADE_DEFAULT)
+                    st.session_state["sm_prev_signal"]  = "WAIT"
+                    _active  = dict(_SM_TRADE_DEFAULT)
+                    _ladder  = None
+
+                st.session_state["sm_ladder"] = _ladder
+            else:
+                st.session_state["sm_ladder"] = None
+
             with _sm_col_ts:
                 st.caption(f"Last updated: {_ago}m ago")
 
@@ -2549,6 +2665,48 @@ with tab_silvermic:
                     )
 
             st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Active Trade Panel ────────────────────────────────────
+            _trade_state = st.session_state.get("sm_active_trade", {})
+            _ladder_now  = st.session_state.get("sm_ladder")
+
+            if _trade_state.get("active") and _ladder_now:
+                _tp        = _trade_state["entry_price"]
+                _fstop_now = _ladder_now["final_stop"]
+                _pnl_now   = _ladder_now["profit_rs"]
+                _lvl_now   = _ladder_now["level"]
+                _pnl_color = "#00ff88" if _pnl_now >= 0 else "#ff4455"
+                _entry_ist = ""
+                try:
+                    _et      = datetime.fromisoformat(_trade_state["entry_time"])
+                    _et_ist  = _et + timedelta(hours=5, minutes=30)
+                    _entry_ist = _et_ist.strftime("%d %b %H:%M IST")
+                except Exception:
+                    pass
+                st.markdown(
+                    f"<div style='background:#0a1628;border:1px solid #f59e0b;"
+                    f"border-radius:10px;padding:16px;margin:12px 0'>"
+                    f"<div style='color:#f59e0b;font-weight:700;font-size:13px;margin-bottom:10px'>"
+                    f"🔴 TRADE ACTIVE — entered {_entry_ist}</div>"
+                    f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"
+                    f"<div><div style='color:#6b7280;font-size:10px'>Entry Price</div>"
+                    f"<div style='color:#e0e6ff;font-weight:700'>₹{_tp:,.0f}</div></div>"
+                    f"<div><div style='color:#6b7280;font-size:10px'>Trailing Stop</div>"
+                    f"<div style='color:#ff4455;font-weight:700'>₹{_fstop_now:,.0f}</div></div>"
+                    f"<div><div style='color:#6b7280;font-size:10px'>Current P&L</div>"
+                    f"<div style='color:{_pnl_color};font-weight:700'>₹{_pnl_now:+,.0f}</div></div>"
+                    f"<div><div style='color:#6b7280;font-size:10px'>Lock Level</div>"
+                    f"<div style='color:#a0aec0;font-size:11px'>{_lvl_now}</div></div>"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("📤 Manual Exit", key="sm_manual_exit",
+                             help="Mark trade as manually exited"):
+                    _sm_trade_close(_trade_state, float(_ent["close"]),
+                                    "Manual exit", _fstop_now)
+                    st.session_state["sm_active_trade"] = dict(_SM_TRADE_DEFAULT)
+                    st.session_state["sm_prev_signal"]  = "WAIT"
+                    st.rerun()
 
             # ── Section 2.5: News Confirmation Panel ─────────────────
             st.markdown("#### 🧠 News Confirmation")

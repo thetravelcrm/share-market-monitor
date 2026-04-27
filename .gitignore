@@ -3,6 +3,8 @@
 *.fyers_session.json
 .fyers_session.json
 .silvermic_config.json
+silvermic_active_trade.json
+silvermic_trade_history.json
 
 # Python
 __pycache__/

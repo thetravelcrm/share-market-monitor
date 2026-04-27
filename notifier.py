@@ -88,3 +88,61 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
     except Exception as e:
         logger.warning("Slack alert exception: %s", e)
         return False
+
+
+def send_slack_exit_alert(bot_token: str, channel: str, payload: dict) -> bool:
+    """
+    Post a SILVERMIC exit alert.
+
+    payload keys: entry_price, exit_price, pnl_rs, exit_reason, final_stop
+    Returns True on success.
+    """
+    if not bot_token or not bot_token.startswith("xoxb-"):
+        logger.warning("Invalid Slack bot token — exit alert skipped")
+        return False
+
+    entry  = payload.get("entry_price", 0)
+    exit_p = payload.get("exit_price", 0)
+    pnl    = payload.get("pnl_rs", 0)
+    reason = payload.get("exit_reason", "Stop hit")
+    stop   = payload.get("final_stop", 0)
+
+    pnl_emoji = "✅" if pnl >= 0 else "🛑"
+    header    = f"{pnl_emoji} SILVERMIC EXIT — {reason}"
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": header, "emoji": True},
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Entry Price*\n₹{entry:,.0f}"},
+                {"type": "mrkdwn", "text": f"*Exit Price*\n₹{exit_p:,.0f}"},
+                {"type": "mrkdwn", "text": f"*P&L*\n₹{pnl:+,.0f}"},
+                {"type": "mrkdwn", "text": f"*Final Stop*\n₹{stop:,.0f}"},
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"Exit reason: *{reason}*"}],
+        },
+    ]
+
+    try:
+        resp = requests.post(
+            _SLACK_API,
+            headers={"Authorization": f"Bearer {bot_token}"},
+            json={"channel": channel, "blocks": blocks},
+            timeout=8,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            logger.info("Slack exit alert sent to %s", channel)
+            return True
+        logger.warning("Slack exit alert failed: %s", data.get("error", "unknown"))
+        return False
+    except Exception as e:
+        logger.warning("Slack exit alert exception: %s", e)
+        return False
