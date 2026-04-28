@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.29"
-_APP_BUILD   = "28 Apr 2026 15:20"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.30"
+_APP_BUILD   = "28 Apr 2026 15:38"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1975,10 +1975,31 @@ with tab_history:
         with _fc3:
             _res_filter = st.multiselect("Result", ["Profitable", "Loss", "Pending"], default=["Profitable", "Loss", "Pending"], key="mphr_res")
 
+        def _result_bucket(p: dict, cur_px: float) -> str:
+            """Classify a signal as Profitable / Loss / Pending."""
+            if p.get("outcome"):
+                return "Profitable" if p["outcome"] == "WIN" else "Loss"
+            _ep = float(p.get("prediction_price") or 0)
+            if _ep <= 0:
+                _lo, _hi = float(p.get("entry_low") or 0), float(p.get("entry_high") or 0)
+                if _lo > 0 and _hi > 0:
+                    _ep = (_lo + _hi) / 2
+            if _ep > 0 and cur_px > 0:
+                _pnl = (cur_px - _ep) / _ep * 100 if p.get("action") == "BUY" else (_ep - cur_px) / _ep * 100
+                if _pnl > 0:
+                    return "Profitable"
+                elif _pnl < -0.05:
+                    return "Loss"
+            return "Pending"
+
         _filtered = [
             p for p in _all_preds
-            if p.get("impact_strength") in _imp_filter and p.get("action") in _act_filter
+            if p.get("impact_strength") in _imp_filter
+            and p.get("action") in _act_filter
+            and _result_bucket(p, _mphr_price(p.get("symbol", ""))) in _res_filter
         ]
+
+        st.caption(f"Showing {len(_filtered)} of {len(_all_preds)} signals")
 
         # ── Signal cards ──────────────────────────────────────
         _oc_badge_map = {

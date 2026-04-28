@@ -42,30 +42,37 @@ def _strict_filter(result: ImpactResult) -> Optional[str]:
     if not tech:
         return "No technical data available"
 
-    # Only block truly dead volume (< 0.5x avg); volume_dry already catches this
-    # Removing the < 1.0 gate — slightly below-average volume is normal on news days
+    # Macro/broad-sector matches are too indirect to trade directionally.
+    # Only Direct (stock named in news) or Sectoral (same industry) qualify.
+    if result.relation == "Macro":
+        return "Macro-level keyword match — too broad for a directional trade"
+
+    # EXTREME/HIGH impact required for actionable signals
+    if result.impact_strength not in ("EXTREME", "HIGH"):
+        return "Impact below HIGH — insufficient catalyst strength"
 
     # Market regime must be favorable
     regime = getattr(tech, "market_regime", "Unknown")
     if regime == "LowLiquidity":
         return "Low liquidity — no reliable price action"
-    # Sideways filter only blocks LOW/MEDIUM impact — HIGH/EXTREME news can break a sideways market
     if regime == "Sideways" and not tech.bb_squeeze:
-        if result.impact_strength not in ("EXTREME", "HIGH"):
-            return "Sideways market, no breakout setup"
+        return "Sideways market with no breakout setup"
 
-    # News + Technical must not strongly contradict
+    # SuperTrend must not directly oppose the signal direction
     sent = result.sentiment_label
-    if sent == "Positive" and tech.trend == "Downtrend" and not tech.near_support:
-        _st = getattr(tech, "supertrend_bullish", None)
-        if _st is False:
-            return "Positive news contradicts downtrend + bearish SuperTrend"
-    if sent == "Negative" and tech.trend == "Uptrend" and not tech.near_resistance:
-        _st = getattr(tech, "supertrend_bullish", None)
-        if _st is True:
-            return "Negative news contradicts uptrend + bullish SuperTrend"
+    _st = getattr(tech, "supertrend_bullish", None)
+    if sent == "Positive" and _st is False:
+        return "Bullish news contradicts bearish SuperTrend"
+    if sent == "Negative" and _st is True:
+        return "Bearish news contradicts bullish SuperTrend"
 
-    # Volume dry = no smart money interest
+    # Trend + news direction must not strongly contradict
+    if sent == "Positive" and tech.trend == "Downtrend" and not tech.near_support:
+        return "Positive news in downtrend with no support — falling knife"
+    if sent == "Negative" and tech.trend == "Uptrend" and not tech.near_resistance:
+        return "Negative news in uptrend with no resistance — strong momentum"
+
+    # Volume dry = no institutional interest
     if getattr(tech, "volume_dry", False):
         return "Volume dry (< 0.5x avg) — no institutional interest"
 
