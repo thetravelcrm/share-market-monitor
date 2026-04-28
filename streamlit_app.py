@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.26"
-_APP_BUILD   = "28 Apr 2026 10:46"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.27"
+_APP_BUILD   = "28 Apr 2026 11:16"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2593,7 +2593,12 @@ with tab_silvermic:
                 st.caption(f"Last updated: {_ago}m ago")
 
             # ── Section 1: 1H Trend Filter ───────────────────────────
-            st.markdown("#### 1H Trend Filter")
+            try:
+                from fyers_fetcher import _mcx_fyers_symbol
+                _sm_active_sym = _mcx_fyers_symbol("SILVERMIC")
+            except Exception:
+                _sm_active_sym = "SILVERMIC"
+            st.markdown(f"#### 1H Trend Filter <sub style='font-size:11px;color:#6b7280'>{_sm_active_sym}</sub>", unsafe_allow_html=True)
             _sm_c1, _sm_c2, _sm_c3, _sm_c4 = st.columns(4)
 
             def _sm_tile(col, label, ok: bool, value: str):

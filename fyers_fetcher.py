@@ -244,7 +244,7 @@ _MCX_SYMBOLS = {"SILVERMIC", "GOLDM", "CRUDEOIL", "NATURALGAS",
 _MCX_EXPIRY_MONTHS = {
     "SILVERMIC": (4, 6, 8, 11),  # Apr, Jun, Aug, Nov
 }
-_MCX_ROLLOVER_DAYS_BEFORE_EXPIRY = 3
+_MCX_ROLLOVER_DAYS_BEFORE_EXPIRY = 1  # roll to next contract one day before expiry
 
 
 def _active_mcx_expiry(symbol: str):

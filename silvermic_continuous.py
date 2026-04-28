@@ -39,7 +39,7 @@ IST_OFFSET = timedelta(hours=5, minutes=30)
 _EXPIRY_MONTHS = {4: "APR", 6: "JUN", 8: "AUG", 11: "NOV"}
 
 # Roll to next contract this many days before expiry (MCX silver dies on liquidity)
-ROLLOVER_DAYS_BEFORE_EXPIRY = 3
+ROLLOVER_DAYS_BEFORE_EXPIRY = 1  # roll to next contract one day before expiry
 
 
 def _contract_symbol(year: int, month: int) -> str:
