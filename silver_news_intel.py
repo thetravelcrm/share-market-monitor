@@ -42,8 +42,24 @@ _SILVER_KEYWORDS: list[str] = [
 ]
 
 # Pre-compiled patterns for speed
+_STEM_KEYWORDS = {
+    "geopolit",
+    "escalat",
+    "de-escalat",
+    "tension eas",
+    "manufacturing expand",
+    "manufacturing contract",
+}
+
+
+def _compile_keyword(kw: str) -> re.Pattern:
+    """Whole-word match, with controlled prefix matching for stem keywords."""
+    suffix = "" if kw in _STEM_KEYWORDS else r"\b"
+    return re.compile(r'\b' + re.escape(kw) + suffix, re.IGNORECASE)
+
+
 _SILVER_PATTERNS = [
-    re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE)
+    _compile_keyword(kw)
     for kw in _SILVER_KEYWORDS
 ]
 
@@ -102,7 +118,7 @@ _INVERSE_RULES: list[tuple[list[str], float]] = [
 
 # Pre-compile inverse patterns
 _INVERSE_COMPILED: list[tuple[list[re.Pattern], float]] = [
-    ([re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE) for kw in kws], direction)
+    ([_compile_keyword(kw) for kw in kws], direction)
     for kws, direction in _INVERSE_RULES
 ]
 
@@ -178,7 +194,7 @@ _IMPACT_TIERS: list[tuple[list[str], float]] = [
 ]
 
 _IMPACT_COMPILED: list[tuple[list[re.Pattern], float]] = [
-    ([re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE) for kw in kws], weight)
+    ([_compile_keyword(kw) for kw in kws], weight)
     for kws, weight in _IMPACT_TIERS
 ]
 

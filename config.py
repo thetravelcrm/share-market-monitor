@@ -239,8 +239,6 @@ STOCK_UNIVERSE = {
     "SUZLON":     {"name":"Suzlon Energy",         "sector":"Renewables","keywords":["suzlon","suzlon energy"]},
     "GREENPANEL": {"name":"Greenpanel Industries",  "sector":"Renewables","keywords":["greenko","greenpanel"]},
     "IREDA":      {"name":"IREDA",                 "sector":"Renewables","keywords":["ireda","indian renewable energy"]},
-    "SGBLTD":     {"name":"SGB Ltd",               "sector":"Power","keywords":["sgb"]},  # TODO: verify NSE symbol
-
     # ── CONGLOMERATES / ADANI GROUP ───────────────────────────
     "ADANIENT":   {"name":"Adani Enterprises",     "sector":"Conglomerate","keywords":["adani enterprises","adanient","gautam adani"]},
     "ADANIPORTS": {"name":"Adani Ports",           "sector":"Infrastructure","keywords":["adani ports","adaniports"]},
@@ -500,7 +498,7 @@ MACRO_SECTOR_MAP = {
     "interest rate":   ["Banking","NBFC","Real Estate","Insurance"],
     "repo rate":       ["Banking","NBFC","Real Estate"],
     "inflation":       ["FMCG","Banking","Automobile","Chemicals"],
-    "crude oil":       ["Oil & Gas","Automobile","Airlines","Chemicals","MCX/Energy"],
+    "crude oil":       ["Oil & Gas","Automobile","Aviation","Chemicals","MCX/Energy"],
     "oil price":       ["Oil & Gas","MCX/Energy","Automobile"],
     "rupee":           ["IT","Pharma","Oil & Gas"],
     "dollar":          ["IT","Pharma","Oil & Gas","FMCG"],

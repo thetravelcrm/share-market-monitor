@@ -37,7 +37,10 @@ def _parse_date(entry) -> datetime:
         raw = getattr(entry, attr, None)
         if raw:
             try:
-                return dateparser.parse(raw).replace(tzinfo=timezone.utc)
+                parsed = dateparser.parse(raw)
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
             except Exception:
                 pass
     return datetime.now(tz=timezone.utc)

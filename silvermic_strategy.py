@@ -68,7 +68,10 @@ def _s_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     avg_gain = gain.ewm(com=period - 1, adjust=False).mean()
     avg_loss = loss.ewm(com=period - 1, adjust=False).mean()
     rs       = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - 100 / (1 + rs)
+    rsi      = 100 - 100 / (1 + rs)
+    rsi      = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    rsi      = rsi.mask((avg_loss == 0) & (avg_gain == 0), 50.0)
+    return rsi.fillna(50.0)
 
 
 def _s_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:

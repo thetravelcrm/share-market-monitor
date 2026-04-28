@@ -200,9 +200,9 @@ section[data-testid="stSidebar"] .stButton button:hover { background: #ffd700; }
 
 
 # ═══════════════════════════════════════════════════════════════
-#  PIN Gate  (24-hour session via daily URL token; auto-submits at 4 digits)
+#  PIN Gate  (session_state only; auto-submits at 4 digits)
 # ═══════════════════════════════════════════════════════════════
-import hashlib as _hashlib
+import hmac as _hmac
 
 def _get_pin() -> str:
     try:
@@ -210,20 +210,15 @@ def _get_pin() -> str:
     except Exception:
         return ""
 
-def _daily_token() -> str:
-    """Hash of PIN + IST date — changes each midnight IST."""
-    ist_today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
-    return _hashlib.md5((_get_pin() + ist_today).encode()).hexdigest()[:16]
-
 if "pin_verified" not in st.session_state:
     st.session_state["pin_verified"] = False
 
-# Restore from URL token (persists across page refreshes for today)
-_qp = st.query_params
-if not st.session_state["pin_verified"] and _qp.get("t") == _daily_token():
-    st.session_state["pin_verified"] = True
-
 if not st.session_state["pin_verified"]:
+    _expected_pin = _get_pin()
+    if not _expected_pin:
+        st.error("APP_PIN is missing in Streamlit secrets. Add it before opening the dashboard.")
+        st.stop()
+
     _, col_pin, _ = st.columns([1, 1, 1])
     with col_pin:
         st.markdown("""
@@ -239,9 +234,8 @@ if not st.session_state["pin_verified"]:
         )
         # Auto-submit when 4 digits entered (no button press needed)
         if len(pin_val) == 4:
-            if pin_val == _get_pin():
+            if _hmac.compare_digest(pin_val, _expected_pin):
                 st.session_state["pin_verified"] = True
-                st.query_params["t"] = _daily_token()   # persist for today
                 st.rerun()
             else:
                 st.error("Incorrect PIN. Please try again.")
@@ -618,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.25"
-_APP_BUILD   = "27 Apr 2026 14:39"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.26"
+_APP_BUILD   = "28 Apr 2026 10:46"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1087,7 +1081,7 @@ with tab_signals:
         st.info("No signals — try lowering min impact or extending lookback hours.")
     else:
         fc1, fc2, fc3 = st.columns(3)
-        sig_action   = fc1.multiselect("Action", ["BUY","SHORT","AVOID"], default=["BUY","SHORT"])
+        sig_action   = fc1.multiselect("Action", ["BUY","SHORT","AVOID","NO TRADE"], default=["BUY","SHORT"])
         sig_min_conf = fc2.slider("Min confidence", 0, 100, 40, step=5)
         sig_edges    = fc3.multiselect("Edge",
                          ["Underreaction","Momentum","Macro","Mean-Reversion"],
@@ -1098,13 +1092,13 @@ with tab_signals:
                        if not _is_mcx_metal(imp)]
 
         buys    = [(item,imp,sig) for item,imp,sig in _eq_signals
-                   if sig.action=="BUY"   and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+                   if sig.action=="BUY"   and sig.action in sig_action and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
         shorts  = [(item,imp,sig) for item,imp,sig in _eq_signals
-                   if sig.action=="SHORT" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+                   if sig.action=="SHORT" and sig.action in sig_action and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
         avoids  = [(item,imp,sig) for item,imp,sig in _eq_signals
-                   if sig.action=="AVOID" and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
+                   if sig.action=="AVOID" and sig.action in sig_action and sig.confidence>=sig_min_conf and sig.edge_type in sig_edges]
         notrades = [(item,imp,sig) for item,imp,sig in _eq_signals
-                    if sig.action=="NO TRADE"]
+                    if sig.action=="NO TRADE" and sig.action in sig_action]
 
         sub1, sub2, sub3, sub4 = st.tabs([
             f"BUY ({len(buys)})",
@@ -2271,7 +2265,13 @@ def _sm_config_save(cfg: dict) -> None:
 # ── SILVERMIC trade state persistence ──────────────────────────
 _SM_TRADE_PATH   = _sm_os.path.join(_sm_os.path.dirname(__file__), "silvermic_active_trade.json")
 _SM_HISTORY_PATH = _sm_os.path.join(_sm_os.path.dirname(__file__), "silvermic_trade_history.json")
-_SM_TRADE_DEFAULT = {"active": False, "entry_price": 0, "entry_time": "", "entry_stop": 0}
+_SM_TRADE_DEFAULT = {
+    "active": False,
+    "entry_price": 0,
+    "entry_time": "",
+    "entry_stop": 0,
+    "entry_atr": 0,
+}
 
 
 def _sm_trade_load() -> dict:
@@ -2296,6 +2296,7 @@ def _sm_trade_close(entry: dict, exit_price: float, exit_reason: str, final_stop
         "entry_time":  entry.get("entry_time", ""),
         "entry_price": entry.get("entry_price", 0),
         "entry_stop":  entry.get("entry_stop", 0),
+        "entry_atr":   entry.get("entry_atr", 0),
         "exit_time":   datetime.now(timezone.utc).isoformat(),
         "exit_price":  round(exit_price, 2),
         "exit_reason": exit_reason,
@@ -2456,6 +2457,7 @@ with tab_silvermic:
                     )
                 if st.button("✅ Record Entry", key="me_record_btn"):
                     import datetime as _dt_mod
+                    from silvermic_strategy import ATR_SL_MULT as _SM_ATR_SL_MULT
                     _naive_ist = _dt_mod.datetime.combine(_me_date, _me_time)
                     _entry_utc = (_naive_ist - _dt_mod.timedelta(hours=5, minutes=30)).isoformat() + "+00:00"
                     _manual_trade = {
@@ -2463,6 +2465,7 @@ with tab_silvermic:
                         "entry_price": float(_me_entry),
                         "entry_time":  _entry_utc,
                         "entry_stop":  float(_me_stop),
+                        "entry_atr":   max(0.0, (float(_me_entry) - float(_me_stop)) / _SM_ATR_SL_MULT),
                     }
                     _sm_trade_save(_manual_trade)
                     st.session_state["sm_active_trade"] = _manual_trade
@@ -2527,6 +2530,7 @@ with tab_silvermic:
                     "entry_price": _ent.get("entry_price", 0),
                     "entry_time":  datetime.now(timezone.utc).isoformat(),
                     "entry_stop":  _ent.get("stop_loss", 0),
+                    "entry_atr":   _ent.get("atr", 0),
                 }
                 _sm_trade_save(_new_trade)
                 st.session_state["sm_active_trade"] = _new_trade
@@ -2541,12 +2545,13 @@ with tab_silvermic:
                 _ep      = _active["entry_price"]
                 _cur     = float(_ent["close"])
                 _cur_atr = float(_ent["atr"])
-                _ladder  = _sm_exit_ladder(_ep, _cur, _cur_atr)
+                _entry_atr = float(_active.get("entry_atr") or _cur_atr)
+                _ladder  = _sm_exit_ladder(_ep, _cur, _entry_atr)
                 _fstop   = _ladder["final_stop"]
                 _level   = _ladder["level"]
                 _pnl     = _ladder["profit_rs"]
 
-                _stop_hit = _cur < _fstop
+                _stop_hit = _cur <= _fstop
                 _ist_now  = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
                 _eod_hit  = (
                     (_ist_now.hour > _SM_FLAT_H)

@@ -5,6 +5,7 @@
 .silvermic_config.json
 silvermic_active_trade.json
 silvermic_trade_history.json
+signal_history.json
 
 # Python
 __pycache__/
@@ -18,3 +19,8 @@ venv/
 
 # OS
 .DS_Store
+
+# Local tooling / generated artifacts
+.claude/
+.playwright-mcp/
+sm_*.png

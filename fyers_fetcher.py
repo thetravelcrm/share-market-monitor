@@ -239,26 +239,47 @@ def auto_login() -> tuple[Optional[str], str]:
 _MCX_SYMBOLS = {"SILVERMIC", "GOLDM", "CRUDEOIL", "NATURALGAS",
                 "COPPER", "ZINC", "ALUMINIUM", "NICKEL", "LEAD"}
 
+# SILVERMIC trades only in these listed expiry months. Other tracked MCX
+# contracts use the regular near-month symbol format.
+_MCX_EXPIRY_MONTHS = {
+    "SILVERMIC": (4, 6, 8, 11),  # Apr, Jun, Aug, Nov
+}
+_MCX_ROLLOVER_DAYS_BEFORE_EXPIRY = 3
+
+
+def _active_mcx_expiry(symbol: str):
+    """Return the selected MCX expiry date for the active/next contract."""
+    import calendar
+    from datetime import date, datetime, timezone, timedelta
+
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    today = ist.date()
+    months = _MCX_EXPIRY_MONTHS.get(symbol, tuple(range(1, 13)))
+
+    for year in (today.year, today.year + 1):
+        for month in months:
+            if year == today.year and month < today.month:
+                continue
+            last_day = calendar.monthrange(year, month)[1]
+            expiry = date(year, month, last_day)
+            rollover = expiry - timedelta(days=_MCX_ROLLOVER_DAYS_BEFORE_EXPIRY)
+            if today < rollover:
+                return expiry
+
+    # Defensive fallback: first configured expiry in the following year.
+    month = months[0]
+    return date(today.year + 1, month, calendar.monthrange(today.year + 1, month)[1])
+
 
 def _mcx_fyers_symbol(symbol: str) -> str:
     """
     Build the active near-month Fyers MCX symbol.
     Fyers format: MCX:SILVERMIC26APR  (symbol + 2-digit-year + 3-letter-month)
-    Uses the current month; if today is past the 25th, rolls to next month
-    (MCX contracts typically expire on the last day of the month).
+    Uses each commodity's listed expiry cycle and rolls shortly before expiry.
     """
-    from datetime import datetime, timezone, timedelta
-    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-    # Roll to next month if within last 5 days of month (contract near expiry)
-    if ist.day >= 26:
-        if ist.month == 12:
-            exp = ist.replace(year=ist.year + 1, month=1, day=1)
-        else:
-            exp = ist.replace(month=ist.month + 1, day=1)
-    else:
-        exp = ist
-    yy  = exp.strftime("%y")       # "26"
-    mmm = exp.strftime("%b").upper()  # "APR"
+    exp = _active_mcx_expiry(symbol)
+    yy  = f"{exp.year % 100:02d}"       # "26"
+    mmm = exp.strftime("%b").upper()    # "APR"
     return f"MCX:{symbol}{yy}{mmm}"
 
 

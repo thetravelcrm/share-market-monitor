@@ -24,12 +24,19 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
         logger.warning("Invalid Slack bot token — alert skipped")
         return False
 
-    entry = payload.get("entry", 0)
-    sl    = payload.get("stop_loss", 0)
-    risk  = round(entry - sl, 0) if entry and sl else "N/A"
-    t1    = payload.get("t1", round(entry + 1500, 0))
-    t2    = payload.get("t2", round(entry + 4000, 0))
-    t3    = payload.get("t3", round(entry + 11000, 0))
+    def _num(value, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    entry = _num(payload.get("entry", 0))
+    sl    = _num(payload.get("stop_loss", 0))
+    risk  = round(entry - sl, 0) if entry and sl else None
+    risk_text = f"₹{risk:,.0f}" if risk is not None else "N/A"
+    t1    = _num(payload.get("t1", round(entry + 1500, 0)))
+    t2    = _num(payload.get("t2", round(entry + 4000, 0)))
+    t3    = _num(payload.get("t3", round(entry + 11000, 0)))
 
     blocks = [
         {
@@ -41,7 +48,7 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
             "fields": [
                 {"type": "mrkdwn", "text": f"*Entry Price*\n₹{entry:,.0f}"},
                 {"type": "mrkdwn", "text": f"*Stop Loss*\n₹{sl:,.0f}"},
-                {"type": "mrkdwn", "text": f"*Risk/Lot*\n₹{risk:,.0f}"},
+                {"type": "mrkdwn", "text": f"*Risk/Lot*\n{risk_text}"},
                 {"type": "mrkdwn", "text": f"*News Score*\n{payload.get('news_score', 'N/A')}/10 — {payload.get('news_label', '')}"},
             ],
         },

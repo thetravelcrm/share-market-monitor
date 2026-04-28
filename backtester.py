@@ -48,12 +48,16 @@ def backtest_signal(
                     "hit_target": False, "hit_stop": False,
                     "max_favourable": 0, "max_adverse": 0}
 
-        # Skip first bar (entry day) — check from next day onwards
+        # Skip first bar (entry day) — check from next day onwards.
+        # The extra fetched bars are only weekend/holiday buffer and must not
+        # influence the measured outcome.
         check = hist.iloc[1:horizon_days + 1] if len(hist) > 1 else hist
+        if check.empty:
+            check = hist.iloc[:1]
 
         hit_target = False
         hit_stop   = False
-        final_price = float(hist["Close"].iloc[-1])
+        exit_price: float | None = None
 
         for _, row in check.iterrows():
             high_px = float(row["High"])
@@ -63,29 +67,31 @@ def backtest_signal(
                 stp_hit = low_px  <= stop
                 if tgt_hit and stp_hit:
                     # Both hit on same bar — conservative: assume stop hit first
-                    hit_stop = True; break
+                    hit_stop = True; exit_price = stop; break
                 if tgt_hit:
-                    hit_target = True; break
+                    hit_target = True; exit_price = target; break
                 if stp_hit:
-                    hit_stop   = True; break
+                    hit_stop   = True; exit_price = stop; break
             else:  # SHORT
                 tgt_hit = low_px  <= target
                 stp_hit = high_px >= stop
                 if tgt_hit and stp_hit:
-                    hit_stop = True; break
+                    hit_stop = True; exit_price = stop; break
                 if tgt_hit:
-                    hit_target = True; break
+                    hit_target = True; exit_price = target; break
                 if stp_hit:
-                    hit_stop   = True; break
+                    hit_stop   = True; exit_price = stop; break
+
+        final_price = exit_price if exit_price is not None else float(check["Close"].iloc[-1])
 
         if action == "BUY":
             actual_return = round((final_price - entry) / entry * 100, 2) if entry > 0 else 0
-            max_fav = round((check["High"].max() - entry) / entry * 100, 2) if entry > 0 else 0
-            max_adv = round((check["Low"].min()  - entry) / entry * 100, 2) if entry > 0 else 0
+            max_fav = float(round((check["High"].max() - entry) / entry * 100, 2)) if entry > 0 else 0
+            max_adv = float(round((check["Low"].min()  - entry) / entry * 100, 2)) if entry > 0 else 0
         else:
             actual_return = round((entry - final_price) / entry * 100, 2) if entry > 0 else 0
-            max_fav = round((entry - check["Low"].min())  / entry * 100, 2) if entry > 0 else 0
-            max_adv = round((entry - check["High"].max()) / entry * 100, 2) if entry > 0 else 0
+            max_fav = float(round((entry - check["Low"].min())  / entry * 100, 2)) if entry > 0 else 0
+            max_adv = float(round((entry - check["High"].max()) / entry * 100, 2)) if entry > 0 else 0
 
         if hit_target:
             outcome = "WIN"
