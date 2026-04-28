@@ -27,19 +27,41 @@ logger = logging.getLogger(__name__)
 #  Silver-relevant keyword filter
 # ─────────────────────────────────────────────────────────────
 _SILVER_KEYWORDS: list[str] = [
-    # Direct silver
+    # Direct silver — always relevant when these appear
     "silver", "silvermic", "precious metal", "bullion", "comex", "lbma",
     "safe haven", "industrial metal", "photovoltaic", "solar panel",
     "gold silver ratio", "silver demand", "silver supply", "silver etf",
-    # Macro triggers that move silver
+    "silver price", "silver futures", "silver rally", "silver fall",
+    "silver market", "silver mining", "silver production",
+    # Macro triggers — only relevant when paired with metals/commodity context
     "fed rate", "federal reserve", "interest rate", "rate cut", "rate hike",
     "inflation", "cpi", "pce", "core inflation",
-    "dollar index", "dxy", "us dollar", "usd",
+    "dollar index", "dxy", "us dollar",
     "treasury yield", "bond yield", "real yield",
-    "geopolit", "war", "crisis", "sanction", "tariff", "trade war",
+    "geopolit", "war", "crisis", "sanction", "trade war",
     "china manufacturing", "china pmi", "industrial output",
     "gold", "copper", "base metal",
 ]
+
+# Keywords that ONLY qualify an article as silver-relevant when silver/metal
+# context is ALSO present in the same article.  Without context, a "tariff"
+# article about automobiles or an "inflation" article about grocery prices
+# has no direct silver link.
+_BROAD_KEYWORDS_NEED_CONTEXT: set[str] = {
+    "war", "crisis", "sanction", "geopolit", "trade war",
+    "inflation", "cpi", "pce", "core inflation",
+    "interest rate", "fed rate", "federal reserve",
+    "treasury yield", "bond yield", "real yield",
+    "dollar index", "dxy", "us dollar",
+    "china manufacturing", "china pmi", "industrial output",
+    "copper", "base metal",
+}
+
+# Words that confirm silver-market context for broad-keyword articles
+_SILVER_CONTEXT_WORDS: set[str] = {
+    "silver", "gold", "precious", "bullion", "metal", "comex", "lbma",
+    "commodity", "safe haven", "silvermic", "mcx", "mining",
+}
 
 # Pre-compiled patterns for speed
 _STEM_KEYWORDS = {
@@ -63,11 +85,44 @@ _SILVER_PATTERNS = [
     for kw in _SILVER_KEYWORDS
 ]
 
+# Pre-compile context words for fast lookup
+_SILVER_CONTEXT_PATTERNS = [
+    re.compile(r'\b' + re.escape(w) + r'\b', re.IGNORECASE)
+    for w in _SILVER_CONTEXT_WORDS
+]
+
 
 def _is_silver_relevant(item: NewsItem) -> bool:
-    """Check if a news article is relevant to silver price movement."""
+    """
+    Check if a news article is relevant to silver price movement.
+
+    Two-tier filter:
+    1. Specific silver keywords (silver, bullion, comex…) → always relevant.
+    2. Broad macro keywords (war, tariff, inflation…) → relevant ONLY when
+       silver/metal/commodity context words also appear in the article.
+       This prevents GM earnings or airline bond news from scoring as silver news.
+    """
     text = item.raw_text
-    return any(p.search(text) for p in _SILVER_PATTERNS)
+
+    matched_specific = False
+    matched_broad    = False
+
+    for kw, pat in zip(_SILVER_KEYWORDS, _SILVER_PATTERNS):
+        if pat.search(text):
+            if kw in _BROAD_KEYWORDS_NEED_CONTEXT:
+                matched_broad = True
+            else:
+                matched_specific = True
+                break   # specific match is enough
+
+    if matched_specific:
+        return True
+
+    if matched_broad:
+        # Require at least one silver/metal/commodity context word
+        return any(cp.search(text) for cp in _SILVER_CONTEXT_PATTERNS)
+
+    return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -155,10 +210,13 @@ def _recency_weight(published: datetime) -> float:
 
 # Source credibility tiers
 _HIGH_CRED = ["reuters", "bloomberg", "financial times", "cnbc", "rbi",
-              "federal reserve", "fed", "wall street journal", "ft"]
+              "federal reserve", "fed", "wall street journal", "ft",
+              "kitco", "silver institute", "metals daily"]
 _MED_CRED  = ["economic times", "moneycontrol", "mint", "business standard",
               "investing.com", "mining.com", "livemint", "financial express",
-              "hindu business line", "kitco", "tradingview"]
+              "hindu business line", "tradingview", "marketwatch",
+              "bullion star", "bullionvault", "silverseek", "gold price",
+              "world gold council", "mcx", "sebi"]
 _LOW_CRED  = ["zee business", "ndtv", "yahoo"]
 
 
@@ -271,7 +329,7 @@ def _classify_verdict(score: float) -> tuple[str, str]:
 # ─────────────────────────────────────────────────────────────
 #  Main entry point
 # ─────────────────────────────────────────────────────────────
-def get_silver_verdict(hours_back: int = 12) -> SilverNewsVerdict:
+def get_silver_verdict(hours_back: int = 24) -> SilverNewsVerdict:
     """
     Fetch news, filter to silver-relevant, score each article,
     and return a compound verdict for use as the SILVERMIC trade gate.

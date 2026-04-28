@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.30"
-_APP_BUILD   = "28 Apr 2026 15:38"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.31"
+_APP_BUILD   = "28 Apr 2026 22:29"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2887,10 +2887,48 @@ with tab_silvermic:
                             unsafe_allow_html=True,
                         )
 
+                # ── Price-vs-News divergence warning ─────────────────
+                try:
+                    _cur_close   = float(_ent.get("close", 0))
+                    _ent_df_bars = _sm_result.entry.get("_day_bars")
+                    # Compute today's IST session change from df_15m
+                    _ist_now     = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+                    _sess_utc    = (_ist_now.replace(hour=9, minute=0, second=0, microsecond=0)
+                                    - timedelta(hours=5, minutes=30))
+                    # Use last close vs first bar of today as proxy
+                    _chg_pct = None
+                    if hasattr(_sm_result, "_df15m_ref"):
+                        _d15 = _sm_result._df15m_ref
+                        _today_bars = _d15[_d15.index >= _sess_utc]
+                        if len(_today_bars) >= 2:
+                            _open_px = float(_today_bars["Open"].iloc[0])
+                            if _open_px > 0:
+                                _chg_pct = (_cur_close - _open_px) / _open_px * 100
+                except Exception:
+                    _chg_pct = None
+
+                if _chg_pct is not None and _nv_decision == "CONFIRMED" and _chg_pct < -0.8:
+                    st.markdown(
+                        f"<div style='background:#2a1000;border:1px solid #ff6b35;"
+                        f"border-radius:8px;padding:10px 14px;margin-top:8px'>"
+                        f"<span style='color:#ff6b35;font-weight:700'>⚡ Price-News Divergence</span>"
+                        f"<span style='color:#ffa07a;font-size:12px'> — News bullish ({_nv_score}/10) "
+                        f"but price is down <b>{_chg_pct:.1f}%</b> today. "
+                        f"Market may have already priced-in the news. Consider waiting for "
+                        f"price to turn positive before entering.</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                elif _chg_pct is not None and _nv_decision == "CONFIRMED" and _chg_pct >= 0.5:
+                    st.markdown(
+                        f"<div style='color:#00cc66;font-size:11px;margin-top:4px'>"
+                        f"✅ Price confirms news — up {_chg_pct:+.1f}% today</div>",
+                        unsafe_allow_html=True,
+                    )
+
                 st.markdown(
                     f"<div style='color:#6b7280;font-size:11px;margin-top:6px'>"
                     f"📰 Based on {_nv_count} article{'s' if _nv_count != 1 else ''} "
-                    f"| Confidence: {_nv_conf}/10</div>",
+                    f"| Confidence: {_nv_conf}/10 | Last 24h</div>",
                     unsafe_allow_html=True,
                 )
             else:

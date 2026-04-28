@@ -48,6 +48,15 @@ NEWS_FEEDS = {
     "CNBC Commodities":          "https://www.cnbc.com/id/15839135/device/rss/rss.html",
     "Investing.com Commodities": "https://in.investing.com/rss/commodities.rss",
     "Mining.com":                "https://www.mining.com/feed/",
+    # ── Silver & Precious Metals specialists (high credibility) ──
+    "Kitco News":                "https://www.kitco.com/rss/latest-news.rss",
+    "Mining.com Silver":         "https://www.mining.com/category/silver/feed/",
+    "MarketWatch":               "https://feeds.marketwatch.com/marketwatch/topstories/",
+    "Investing.com Metals":      "https://in.investing.com/rss/metal_rss.rss",
+    "Bullion Star Blog":         "https://www.bullionstar.com/blogs/rss",
+    # ── Macro / Fed / Dollar — key silver drivers ────────────────
+    "Reuters Commodities":       "https://feeds.reuters.com/reuters/commoditiesNews",
+    "Reuters US Economy":        "https://feeds.reuters.com/reuters/USdollarRSS",
 }
 
 # ── Impact Thresholds ─────────────────────────────────────────
