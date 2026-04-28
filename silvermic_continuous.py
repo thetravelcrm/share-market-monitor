@@ -39,7 +39,7 @@ IST_OFFSET = timedelta(hours=5, minutes=30)
 _EXPIRY_MONTHS = {4: "APR", 6: "JUN", 8: "AUG", 11: "NOV"}
 
 # Roll to next contract this many days before expiry (MCX silver dies on liquidity)
-ROLLOVER_DAYS_BEFORE_EXPIRY = 1  # roll to next contract one day before expiry
+ROLLOVER_DAYS_BEFORE_EXPIRY = 5  # roll to next contract 5 days before expiry
 
 
 def _contract_symbol(year: int, month: int) -> str:
@@ -68,7 +68,7 @@ def _list_contracts(start: datetime, end: datetime) -> list[dict]:
     out.sort(key=lambda c: c["expiry"])
     return [c for c in out
             if c["expiry"] >= start - timedelta(days=120)
-            and c["expiry"] <= end + timedelta(days=30)]
+            and c["expiry"] <= end + timedelta(days=90)]
 
 
 def _fetch_one(symbol: str, token: str, resolution: str,

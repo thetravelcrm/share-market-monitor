@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.27"
-_APP_BUILD   = "28 Apr 2026 11:16"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.28"
+_APP_BUILD   = "28 Apr 2026 11:24"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
