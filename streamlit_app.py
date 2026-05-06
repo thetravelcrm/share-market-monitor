@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.31"
-_APP_BUILD   = "28 Apr 2026 22:29"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.32"
+_APP_BUILD   = "06 May 2026 11:52"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -857,6 +857,27 @@ def _mcx_live_price(symbol: str) -> float:
         return round(raw, 2)
     except Exception:
         return 0.0
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_pe(symbol: str) -> tuple[float, float]:
+    """
+    Return (scrip_pe, sector_pe) for an NSE equity symbol.
+    scrip_pe is fetched live from yfinance trailingPE; sector_pe comes from SECTOR_PE table.
+    Returns (0.0, 0.0) if unavailable.
+    """
+    try:
+        import yfinance as yf
+        from config import SECTOR_PE, STOCK_UNIVERSE
+        info = yf.Ticker(f"{symbol}.NS").info
+        scrip_pe = float(info.get("trailingPE") or info.get("forwardPE") or 0)
+        if scrip_pe <= 0 or scrip_pe > 5000:
+            scrip_pe = 0.0
+        sector = STOCK_UNIVERSE.get(symbol, {}).get("sector", "")
+        sector_pe = SECTOR_PE.get(sector, 0.0)
+        return round(scrip_pe, 1), sector_pe
+    except Exception:
+        return 0.0, 0.0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1323,6 +1344,27 @@ with tab_signals:
                 imp_cls = {"EXTREME":"badge-extreme","HIGH":"badge-high",
                            "MEDIUM":"badge-medium","LOW":"badge-low"}.get(imp.impact_strength,"badge-teal")
 
+                # ── PE ratio fetch (NSE equities only; MCX = no PE) ───
+                _pe_html = ""
+                _mcx_card = imp.symbol in {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS",
+                                           "COPPER","ZINC","ALUMINIUM","NICKEL","LEAD",
+                                           "GOLD","SILVER","SILVERM"}
+                if not _mcx_card:
+                    _scrip_pe, _sector_pe = _fetch_pe(imp.symbol)
+                    if _scrip_pe > 0:
+                        if _sector_pe > 0:
+                            _pe_ratio = _scrip_pe / _sector_pe
+                            _pe_col = "#ff4455" if _pe_ratio > 1.5 else ("#00ff88" if _pe_ratio < 0.8 else "#a8b0d0")
+                            _pe_label = f"PE {_scrip_pe:.0f} | Sector {_sector_pe:.0f}"
+                        else:
+                            _pe_col   = "#a8b0d0"
+                            _pe_label = f"PE {_scrip_pe:.0f}"
+                        _pe_html = (
+                            f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_pe_col};'
+                            f'color:{_pe_col};padding:2px 8px;border-radius:4px;font-size:11px">'
+                            f'{_pe_label}</span> '
+                        )
+
                 # ── Log to journal button ──────────────────────
                 log_key = f"log_{card_class}_{_card_idx}_{sig.symbol}"
                 st.markdown(
@@ -1340,6 +1382,7 @@ with tab_signals:
                     f'  {badge(getattr(imp, "news_type", "Ongoing"), "badge-neg" if getattr(imp, "news_type", "Ongoing") == "Rumor" else ("badge-pos" if getattr(imp, "news_type", "Ongoing") == "Breaking" else "badge-teal"))}'
                     f'  {badge(sig.edge_type, "badge-teal")}'
                     f'  {badge(imp.sector, "badge-gold")}'
+                    f'  {_pe_html}'
                     f'</div>'
                     f'<div style="margin:4px 0 6px">{rsi_html}</div>'
                     f'{event_html}'
