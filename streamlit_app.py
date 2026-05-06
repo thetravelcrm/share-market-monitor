@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.33"
-_APP_BUILD   = "06 May 2026 12:49"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.34"
+_APP_BUILD   = "06 May 2026 13:08"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -863,52 +863,71 @@ def _mcx_live_price(symbol: str) -> float:
 def _fetch_pe(symbol: str) -> tuple[float, float]:
     """
     Return (scrip_pe, sector_pe) for an NSE equity symbol.
-    PE is computed as marketCap / latestAnnualNetIncome — more stable than yfinance
-    trailingPE which uses TTM and is distorted when any quarter has a loss.
-    Falls back to trailingPE if income statement is unavailable.
-    Returns (0.0, 0.0) if unavailable.
+
+    Bulletproof two-tier consensus:
+      Tier 1 (primary): annual income statement PE (mktcap / annual NI).
+        - If latest year PE > 1.5x prior year PE, prior year is used
+          (latest year distorted by one-time write-down / exceptional item).
+        - This matches how Google Finance / NSE show PE for most stocks.
+      Tier 2 (TTM, accepted only when close to Tier 1):
+        - trailingPE and price/trailingEps are accepted only if they fall
+          within ±50% of the primary annual PE.
+        - When TTM is wildly off (quarterly loss distortion), it is ignored.
+      Fallback: if no annual data, TTM sources are used directly.
     """
     try:
         import yfinance as yf
+        import statistics
         from config import SECTOR_PE, STOCK_UNIVERSE
-        t = yf.Ticker(f"{symbol}.NS")
+        t    = yf.Ticker(f"{symbol}.NS")
         info = t.info
-        scrip_pe = 0.0
 
-        # Primary: marketCap / annual net income (avoids TTM quarterly distortion)
-        # If latest year dropped >50% vs prior (one-off writedown), use prior year
-        # so PE matches what major data providers (Google Finance, NSE) show.
+        sector    = STOCK_UNIVERSE.get(symbol, {}).get("sector", "")
+        sector_pe = SECTOR_PE.get(sector, 0.0)
+
+        # Tier 2 — TTM sources
+        ttm_pes: list[float] = []
+        _t_pe  = float(info.get("trailingPE") or 0)
+        if 0 < _t_pe <= 500:
+            ttm_pes.append(_t_pe)
+        _price = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+        _eps   = float(info.get("trailingEps") or 0)
+        if _price > 0 and _eps > 0:
+            _v = round(_price / _eps, 1)
+            if 0 < _v <= 500:
+                ttm_pes.append(_v)
+
+        # Tier 1 — annual income statement
+        annual_pes: list[float] = []
         mktcap = float(info.get("marketCap") or 0)
         if mktcap > 0:
             try:
-                fin = t.financials
-                if "Net Income" in fin.index and not fin.empty:
-                    ni_series = fin.loc["Net Income"].dropna()
-                    ni_latest = float(ni_series.iloc[0]) if len(ni_series) > 0 else 0
-                    ni_prior  = float(ni_series.iloc[1]) if len(ni_series) > 1 else 0
-                    # Use prior year earnings if latest had a >40% drop (exceptional item distortion)
-                    if ni_latest > 0 and ni_prior > 0 and ni_latest < ni_prior * 0.6:
-                        annual_ni = ni_prior
-                    elif ni_latest > 0:
-                        annual_ni = ni_latest
-                    else:
-                        annual_ni = 0
-                    if annual_ni > 0:
-                        scrip_pe = round(mktcap / annual_ni, 1)
+                fin      = t.financials
+                ni_series = fin.loc["Net Income"].dropna() if "Net Income" in fin.index else None
+                if ni_series is not None:
+                    for i in range(min(2, len(ni_series))):
+                        ni = float(ni_series.iloc[i])
+                        if ni > 0:
+                            annual_pes.append(round(mktcap / ni, 1))
             except Exception:
                 pass
 
-        # Fallback: yfinance trailingPE (often wrong for Indian stocks due to TTM quarters)
-        if scrip_pe <= 0:
-            scrip_pe = float(info.get("trailingPE") or info.get("forwardPE") or 0)
+        if annual_pes:
+            annual_pes.sort()
+            # If latest year earnings collapsed (PE jumped >1.5x vs prior), prefer prior year
+            if len(annual_pes) == 2 and annual_pes[1] > annual_pes[0] * 1.5:
+                primary = annual_pes[0]
+            else:
+                primary = statistics.median(annual_pes)
+            # Accept TTM only when it's within ±50% of the annual primary
+            confirmed = [v for v in ttm_pes if primary * 0.67 <= v <= primary * 1.5]
+            scrip_pe  = round(statistics.median([primary] + confirmed), 1)
+        elif ttm_pes:
+            scrip_pe = round(statistics.median(ttm_pes), 1)
+        else:
+            return 0.0, sector_pe
 
-        # Cap at 300 — above that it conveys "very expensive" and precision doesn't matter
-        if scrip_pe <= 0 or scrip_pe > 300:
-            scrip_pe = 0.0
-
-        sector = STOCK_UNIVERSE.get(symbol, {}).get("sector", "")
-        sector_pe = SECTOR_PE.get(sector, 0.0)
-        return round(scrip_pe, 1), sector_pe
+        return (scrip_pe if 0 < scrip_pe <= 500 else 0.0), sector_pe
     except Exception:
         return 0.0, 0.0
 
