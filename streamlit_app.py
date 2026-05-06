@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.32"
-_APP_BUILD   = "06 May 2026 11:52"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.33"
+_APP_BUILD   = "06 May 2026 12:49"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -863,16 +863,49 @@ def _mcx_live_price(symbol: str) -> float:
 def _fetch_pe(symbol: str) -> tuple[float, float]:
     """
     Return (scrip_pe, sector_pe) for an NSE equity symbol.
-    scrip_pe is fetched live from yfinance trailingPE; sector_pe comes from SECTOR_PE table.
+    PE is computed as marketCap / latestAnnualNetIncome — more stable than yfinance
+    trailingPE which uses TTM and is distorted when any quarter has a loss.
+    Falls back to trailingPE if income statement is unavailable.
     Returns (0.0, 0.0) if unavailable.
     """
     try:
         import yfinance as yf
         from config import SECTOR_PE, STOCK_UNIVERSE
-        info = yf.Ticker(f"{symbol}.NS").info
-        scrip_pe = float(info.get("trailingPE") or info.get("forwardPE") or 0)
-        if scrip_pe <= 0 or scrip_pe > 5000:
+        t = yf.Ticker(f"{symbol}.NS")
+        info = t.info
+        scrip_pe = 0.0
+
+        # Primary: marketCap / annual net income (avoids TTM quarterly distortion)
+        # If latest year dropped >50% vs prior (one-off writedown), use prior year
+        # so PE matches what major data providers (Google Finance, NSE) show.
+        mktcap = float(info.get("marketCap") or 0)
+        if mktcap > 0:
+            try:
+                fin = t.financials
+                if "Net Income" in fin.index and not fin.empty:
+                    ni_series = fin.loc["Net Income"].dropna()
+                    ni_latest = float(ni_series.iloc[0]) if len(ni_series) > 0 else 0
+                    ni_prior  = float(ni_series.iloc[1]) if len(ni_series) > 1 else 0
+                    # Use prior year earnings if latest had a >40% drop (exceptional item distortion)
+                    if ni_latest > 0 and ni_prior > 0 and ni_latest < ni_prior * 0.6:
+                        annual_ni = ni_prior
+                    elif ni_latest > 0:
+                        annual_ni = ni_latest
+                    else:
+                        annual_ni = 0
+                    if annual_ni > 0:
+                        scrip_pe = round(mktcap / annual_ni, 1)
+            except Exception:
+                pass
+
+        # Fallback: yfinance trailingPE (often wrong for Indian stocks due to TTM quarters)
+        if scrip_pe <= 0:
+            scrip_pe = float(info.get("trailingPE") or info.get("forwardPE") or 0)
+
+        # Cap at 300 — above that it conveys "very expensive" and precision doesn't matter
+        if scrip_pe <= 0 or scrip_pe > 300:
             scrip_pe = 0.0
+
         sector = STOCK_UNIVERSE.get(symbol, {}).get("sector", "")
         sector_pe = SECTOR_PE.get(sector, 0.0)
         return round(scrip_pe, 1), sector_pe
