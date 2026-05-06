@@ -612,8 +612,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.34"
-_APP_BUILD   = "06 May 2026 13:08"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.35"
+_APP_BUILD   = "06 May 2026 14:00"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -864,30 +864,29 @@ def _fetch_pe(symbol: str) -> tuple[float, float]:
     """
     Return (scrip_pe, sector_pe) for an NSE equity symbol.
 
-    Bulletproof two-tier consensus:
-      Tier 1 (primary): annual income statement PE (mktcap / annual NI).
-        - If latest year PE > 1.5x prior year PE, prior year is used
-          (latest year distorted by one-time write-down / exceptional item).
-        - This matches how Google Finance / NSE show PE for most stocks.
-      Tier 2 (TTM, accepted only when close to Tier 1):
-        - trailingPE and price/trailingEps are accepted only if they fall
-          within ±50% of the primary annual PE.
-        - When TTM is wildly off (quarterly loss distortion), it is ignored.
-      Fallback: if no annual data, TTM sources are used directly.
+    Fast path (one network call — t.info only):
+      Use trailingPE and price/trailingEps from yfinance info.
+      If both sources agree and result is <= 200, return immediately.
+
+    Slow path (second call — t.financials) triggered only when TTM > 200:
+      TTM distortion happens when a company had quarterly losses.
+      In that case fetch annual income statement, use prior year if
+      latest year earnings collapsed (>40% drop), to match Google Finance.
     """
     try:
         import yfinance as yf
         import statistics
         from config import SECTOR_PE, STOCK_UNIVERSE
-        t    = yf.Ticker(f"{symbol}.NS")
-        info = t.info
 
         sector    = STOCK_UNIVERSE.get(symbol, {}).get("sector", "")
         sector_pe = SECTOR_PE.get(sector, 0.0)
 
-        # Tier 2 — TTM sources
+        t    = yf.Ticker(f"{symbol}.NS")
+        info = t.info
+
+        # TTM sources — always available from info dict (no extra call)
         ttm_pes: list[float] = []
-        _t_pe  = float(info.get("trailingPE") or 0)
+        _t_pe = float(info.get("trailingPE") or 0)
         if 0 < _t_pe <= 500:
             ttm_pes.append(_t_pe)
         _price = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
@@ -897,37 +896,41 @@ def _fetch_pe(symbol: str) -> tuple[float, float]:
             if 0 < _v <= 500:
                 ttm_pes.append(_v)
 
-        # Tier 1 — annual income statement
-        annual_pes: list[float] = []
-        mktcap = float(info.get("marketCap") or 0)
-        if mktcap > 0:
-            try:
-                fin      = t.financials
-                ni_series = fin.loc["Net Income"].dropna() if "Net Income" in fin.index else None
-                if ni_series is not None:
-                    for i in range(min(2, len(ni_series))):
-                        ni = float(ni_series.iloc[i])
-                        if ni > 0:
-                            annual_pes.append(round(mktcap / ni, 1))
-            except Exception:
-                pass
-
-        if annual_pes:
-            annual_pes.sort()
-            # If latest year earnings collapsed (PE jumped >1.5x vs prior), prefer prior year
-            if len(annual_pes) == 2 and annual_pes[1] > annual_pes[0] * 1.5:
-                primary = annual_pes[0]
-            else:
-                primary = statistics.median(annual_pes)
-            # Accept TTM only when it's within ±50% of the annual primary
-            confirmed = [v for v in ttm_pes if primary * 0.67 <= v <= primary * 1.5]
-            scrip_pe  = round(statistics.median([primary] + confirmed), 1)
-        elif ttm_pes:
-            scrip_pe = round(statistics.median(ttm_pes), 1)
-        else:
+        if not ttm_pes:
             return 0.0, sector_pe
 
-        return (scrip_pe if 0 < scrip_pe <= 500 else 0.0), sector_pe
+        ttm_pe = round(statistics.median(ttm_pes), 1)
+
+        # Fast path: TTM looks reasonable — no extra network call needed
+        if ttm_pe <= 200:
+            return ttm_pe, sector_pe
+
+        # Slow path: TTM > 200 (likely distorted by quarterly losses).
+        # Fetch annual income statement to get a cleaner PE.
+        mktcap = float(info.get("marketCap") or 0)
+        if mktcap <= 0:
+            return ttm_pe, sector_pe
+
+        try:
+            fin      = t.financials
+            ni_series = fin.loc["Net Income"].dropna() if "Net Income" in fin.index else None
+            annual_pes: list[float] = []
+            if ni_series is not None:
+                for i in range(min(2, len(ni_series))):
+                    ni = float(ni_series.iloc[i])
+                    if ni > 0:
+                        annual_pes.append(round(mktcap / ni, 1))
+            if annual_pes:
+                annual_pes.sort()
+                # If latest year PE > 1.5x prior (earnings collapse), prefer prior year
+                if len(annual_pes) == 2 and annual_pes[1] > annual_pes[0] * 1.5:
+                    return annual_pes[0], sector_pe
+                return round(statistics.median(annual_pes), 1), sector_pe
+        except Exception:
+            pass
+
+        # Annual fetch failed — return TTM as-is (better than nothing)
+        return ttm_pe, sector_pe
     except Exception:
         return 0.0, 0.0
 
