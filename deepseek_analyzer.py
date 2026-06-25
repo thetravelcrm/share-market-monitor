@@ -465,3 +465,50 @@ def is_perfect_entry(verdict: AIVerdict, min_conf: int = 70) -> bool:
     """True only when the deep gate CONFIRMs with strong conviction."""
     return bool(verdict and verdict.ok and verdict.verdict == "CONFIRM"
                 and verdict.confidence >= min_conf)
+
+
+# ─────────────────────────────────────────────────────────────
+#  FINAL "perfect entry" gate for news-driven STOCK signals
+#  (deep model + thinking) — run only on top flash-approved candidates.
+# ─────────────────────────────────────────────────────────────
+
+_PERFECT_STOCK_SYSTEM = (
+    "You are the FINAL risk gate before a real-money intraday / short-term Indian stock "
+    "trade. A news-driven signal has ALREADY been generated (catalyst + technicals scored) "
+    "and already passed a first AI screen. The trader only wants ~90%+ probability setups, "
+    "so be STRICT — skipping a marginal trade is far better than taking it. Use ONLY the "
+    "data provided; never invent numbers. CONFIRM only when ALL hold: the news is a REAL, "
+    "specific catalyst (not a generic mention / gainers-losers recap); the direction has "
+    "clear technical support (trend, MACD, SuperTrend aligned); price location is good (a "
+    "BUY not chasing into resistance or overbought RSI/Stoch; a SHORT not into support / "
+    "oversold); volume confirms; and the expected move has NOT already largely played out "
+    "(actual vs expected). If ANYTHING is weak, borderline, or contradictory, answer CAUTION "
+    "or AVOID. Respond EXACTLY:\n"
+    "VERDICT: CONFIRM|CAUTION|AVOID\n"
+    "AI_CONFIDENCE: <integer 0-100>\n"
+    "- <reason citing a specific data point>\n"
+    "- <reason>\n"
+    "- <reason>\n"
+)
+
+
+def confirm_signal_entry(sig, imp, use_cache: bool = True) -> AIVerdict:
+    """
+    Deep final-gate (pro + thinking) for a news-driven stock signal that already
+    passed the fast screen. CONFIRM only for a clean, high-probability setup.
+    """
+    if not is_configured():
+        return AIVerdict("ERROR", 0, [], "DeepSeek not configured.", ok=False)
+    facts = _signal_facts(sig, imp)
+    ckey = "perfectsig:" + str(hash(facts))
+    if use_cache and ckey in _cache:
+        return _cache[ckey]
+    ok, text = _call(_PERFECT_STOCK_SYSTEM,
+                     "Final-gate this trade setup (be strict):\n\n" + facts,
+                     max_tokens=600)   # no model override -> pro + thinking
+    if not ok:
+        return AIVerdict("ERROR", 0, [], text, ok=False)
+    verdict = _parse_verdict(text, default_verdict="CAUTION")
+    if use_cache:
+        _cache[ckey] = verdict
+    return verdict

@@ -443,6 +443,39 @@ def _ai_filter_signals(signals):
     return approved, rejected
 
 
+# Perfect-entry deep-gate config (cost control)
+_PERFECT_MAX_CHECK = 3    # deep-gate at most this many top signals per scan
+_PERFECT_MIN_CONF  = 80   # only consider signals with at least this system confidence
+
+
+def _ai_perfect_entries(signals):
+    """
+    Deep (pro + thinking) final gate on the TOP flash-approved signals. Returns the
+    list of (tuple, verdict) the deep gate rates a PERFECT entry. Capped to the
+    highest-confidence few to control cost; cached by signal facts so reruns are free.
+    """
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return []
+    if not _dsa.is_configured():
+        return []
+    cands = sorted(
+        [t for t in signals if getattr(t[2], "confidence", 0) >= _PERFECT_MIN_CONF],
+        key=lambda t: t[2].confidence, reverse=True,
+    )[:_PERFECT_MAX_CHECK]
+    out = []
+    for tup in cands:
+        _it, _imp, _sig = tup
+        try:
+            v = _dsa.confirm_signal_entry(_sig, _imp)
+        except Exception:
+            v = None
+        if v and _dsa.is_perfect_entry(v):
+            out.append((tup, v))
+    return out
+
+
 def _render_detail_panel(r, sig=None, all_news=None):
     """Expandable detail panel for a stock — used in Top Impacted & Underreacted tabs."""
     pd_ = r.price_data
@@ -778,8 +811,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.44"
-_APP_BUILD   = "26 Jun 2026 00:31"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.45"
+_APP_BUILD   = "26 Jun 2026 00:45"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1349,6 +1382,50 @@ with tab_signals:
             buys,   _buys_rej   = _ai_filter_signals(buys)
             shorts, _shorts_rej = _ai_filter_signals(shorts)
         _ai_rejected = _buys_rej + _shorts_rej
+
+        # ── 3-gate PERFECT ENTRIES: deep DeepSeek (pro+thinking) on top candidates ──
+        _perfect = []
+        if buys or shorts:
+            with st.spinner("🤖 DeepSeek (pro) checking top signals for perfect entries…"):
+                _perfect = _ai_perfect_entries(buys + shorts)
+        if _perfect:
+            st.markdown("#### 🎯 Perfect Entries — Technical + News + DeepSeek (Pro) all confirmed")
+            _alerted = st.session_state.setdefault("stock_perfect_alerted", set())
+            try:
+                _mkt_stat, _ = market_status()
+            except Exception:
+                _mkt_stat = ""
+            try:
+                _pe_bot  = st.secrets.get("SLACK_BOT_TOKEN", "")
+                _pe_chan = st.secrets.get("SLACK_CHANNEL", "#general")
+            except Exception:
+                _pe_bot, _pe_chan = "", ""
+            for (_ptup, _pv) in _perfect:
+                _pit, _pimp, _psig = _ptup
+                _pcur = cur_sym(_pimp.price_data)
+                st.success(
+                    f"{_psig.action} {_pimp.symbol} ({_pimp.name}) — AI CONFIRM {_pv.confidence}% · "
+                    f"Entry {_pcur}{_psig.entry_low:,.2f}–{_pcur}{_psig.entry_high:,.2f} · "
+                    f"SL {_pcur}{_psig.stop_loss:,.2f} · T2 {_pcur}{_psig.target2:,.2f} · R:R {_psig.risk_reward}",
+                    icon="🎯")
+                for _pr in (_pv.reasons or [])[:3]:
+                    st.caption(f"• {_pr}")
+                # Slack once per symbol/session, only during NSE hours
+                if (_pe_bot and "OPEN" in _mkt_stat and _pimp.symbol not in _alerted):
+                    try:
+                        from notifier import send_perfect_stock_alert
+                        if send_perfect_stock_alert(_pe_bot, _pe_chan, {
+                            "symbol": _pimp.symbol, "name": _pimp.name, "action": _psig.action,
+                            "entry":  f"{_pcur}{_psig.entry_low:,.2f}–{_pcur}{_psig.entry_high:,.2f}",
+                            "stop":   f"{_pcur}{_psig.stop_loss:,.2f}",
+                            "target": f"{_pcur}{_psig.target2:,.2f}",
+                            "rr":     _psig.risk_reward, "ai_conf": _pv.confidence,
+                            "reason": _pv.reasons[0] if _pv.reasons else "Clean high-probability setup",
+                        }):
+                            _alerted.add(_pimp.symbol)
+                    except Exception:
+                        pass
+            st.divider()
 
         sub1, sub2, sub3, sub4 = st.tabs([
             f"BUY ({len(buys)})",

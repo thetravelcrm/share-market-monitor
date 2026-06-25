@@ -99,6 +99,48 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
         return False
 
 
+def send_perfect_stock_alert(bot_token: str, channel: str, payload: dict) -> bool:
+    """
+    Slack alert for a news-driven stock PERFECT ENTRY (all 3 gates passed).
+    payload keys: symbol, name, action, entry, stop, target, rr, ai_conf, reason
+    """
+    if not bot_token or not bot_token.startswith("xoxb-"):
+        logger.warning("Invalid Slack bot token — perfect-entry alert skipped")
+        return False
+    sym    = payload.get("symbol", "")
+    name   = payload.get("name", "")
+    action = payload.get("action", "BUY")
+    blocks = [
+        {"type": "header",
+         "text": {"type": "plain_text", "text": f"🎯 PERFECT ENTRY — {action} {sym}", "emoji": True}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*Stock*\n{name} ({sym})"},
+            {"type": "mrkdwn", "text": f"*Action*\n{action}"},
+            {"type": "mrkdwn", "text": f"*Entry*\n{payload.get('entry', 'N/A')}"},
+            {"type": "mrkdwn", "text": f"*Stop / Target*\nSL {payload.get('stop', 'N/A')} · T {payload.get('target', 'N/A')}"},
+            {"type": "mrkdwn", "text": f"*R:R*\n{payload.get('rr', 'N/A')}"},
+            {"type": "mrkdwn", "text": f"*AI Conviction*\n{payload.get('ai_conf', 'N/A')}%"},
+        ]},
+        {"type": "section",
+         "text": {"type": "mrkdwn", "text": f"*Why:* {payload.get('reason', 'N/A')}"}},
+        {"type": "context",
+         "elements": [{"type": "mrkdwn",
+                       "text": "Technical + News + DeepSeek (Pro) all CONFIRMED · not financial advice"}]},
+    ]
+    try:
+        resp = requests.post(_SLACK_API, headers={"Authorization": f"Bearer {bot_token}"},
+                             json={"channel": channel, "blocks": blocks}, timeout=8)
+        data = resp.json()
+        if data.get("ok"):
+            logger.info("Perfect-entry Slack alert sent for %s", sym)
+            return True
+        logger.warning("Perfect-entry alert failed: %s", data.get("error", "unknown"))
+        return False
+    except Exception as e:
+        logger.warning("Perfect-entry alert exception: %s", e)
+        return False
+
+
 def send_slack_exit_alert(bot_token: str, channel: str, payload: dict) -> bool:
     """
     Post a SILVERMIC exit alert.
