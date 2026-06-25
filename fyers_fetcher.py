@@ -22,16 +22,26 @@ from typing import Optional
 REDIRECT_URI = "https://arshadshare.streamlit.app"
 
 
-def _secrets() -> tuple[str, str]:
-    """Return (client_id, secret_key) from Streamlit secrets."""
+def _sec(name: str, default: str = "") -> str:
+    """
+    Read a secret from Streamlit secrets first, then environment variables.
+    The env fallback lets the headless cron runner (GitHub Actions) use the same
+    auth code as the Streamlit app, where there is no st.secrets file.
+    """
     try:
         import streamlit as st
-        return (
-            st.secrets.get("FYERS_CLIENT_ID", ""),
-            st.secrets.get("FYERS_SECRET_KEY", ""),
-        )
+        v = st.secrets.get(name, "")
+        if v:
+            return str(v)
     except Exception:
-        return "", ""
+        pass
+    import os
+    return os.environ.get(name, default)
+
+
+def _secrets() -> tuple[str, str]:
+    """Return (client_id, secret_key) from Streamlit secrets or environment."""
+    return _sec("FYERS_CLIENT_ID"), _sec("FYERS_SECRET_KEY")
 
 
 def is_configured() -> bool:
@@ -87,17 +97,13 @@ def get_fyers_model(access_token: str):
 
 
 def is_auto_login_configured() -> bool:
-    """True if FYERS_ID, TOTP secret + PIN are present in Streamlit secrets."""
-    try:
-        import streamlit as st
-        return bool(
-            st.secrets.get("FYERS_ID") and
-            st.secrets.get("FYERS_TOTP_SECRET") and
-            st.secrets.get("FYERS_PIN") and
-            is_configured()
-        )
-    except Exception:
-        return False
+    """True if FYERS_ID, TOTP secret + PIN are present (Streamlit secrets or env)."""
+    return bool(
+        _sec("FYERS_ID") and
+        _sec("FYERS_TOTP_SECRET") and
+        _sec("FYERS_PIN") and
+        is_configured()
+    )
 
 
 def auto_login() -> tuple[Optional[str], str]:
@@ -115,17 +121,9 @@ def auto_login() -> tuple[Optional[str], str]:
     import requests, pyotp, hashlib, urllib.parse
 
     cid, sk = _secrets()
-    try:
-        import streamlit as st
-        totp_secret = st.secrets.get("FYERS_TOTP_SECRET", "")
-        pin         = st.secrets.get("FYERS_PIN", "")
-    except Exception:
-        return None, "Could not read Streamlit secrets"
-
-    try:
-        fyers_id = st.secrets.get("FYERS_ID", "")   # user's Fyers login ID (e.g. XY12345)
-    except Exception:
-        fyers_id = ""
+    totp_secret = _sec("FYERS_TOTP_SECRET")
+    pin         = _sec("FYERS_PIN")
+    fyers_id    = _sec("FYERS_ID")   # user's Fyers login ID (e.g. XY12345)
 
     if not cid or not sk:
         return None, "FYERS_CLIENT_ID or FYERS_SECRET_KEY missing in secrets"

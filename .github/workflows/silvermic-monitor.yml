@@ -1,0 +1,52 @@
+name: SILVERMIC Monitor
+
+# Runs SILVERMIC signal + DeepSeek gate + Slack alert WITHOUT a browser open.
+# Cron is in UTC. MCX trades ~09:00-23:30 IST == 03:30-18:00 UTC, Mon-Fri.
+# The script also guards market hours precisely, so a slightly wider window is fine.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days of repo inactivity,
+# and scheduled runs can be delayed a few minutes under load.
+
+on:
+  schedule:
+    - cron: "*/15 3-18 * * 1-5"   # every 15 min, 03:00-18:59 UTC, weekdays
+  workflow_dispatch: {}            # allow manual "Run workflow" for testing
+
+# Don't let two runs overlap (each does a Fyers login).
+concurrency:
+  group: silvermic-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run SILVERMIC monitor
+        env:
+          # ── Fyers (required) ──
+          FYERS_CLIENT_ID:       ${{ secrets.FYERS_CLIENT_ID }}
+          FYERS_SECRET_KEY:      ${{ secrets.FYERS_SECRET_KEY }}
+          FYERS_ID:              ${{ secrets.FYERS_ID }}
+          FYERS_TOTP_SECRET:     ${{ secrets.FYERS_TOTP_SECRET }}
+          FYERS_PIN:             ${{ secrets.FYERS_PIN }}
+          # ── DeepSeek (optional — no key => alert on technical LONG only) ──
+          DEEPSEEK_API_KEY:      ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_SCREEN_MODEL: ${{ secrets.DEEPSEEK_SCREEN_MODEL }}
+          # ── Slack (required for alerts) ──
+          SLACK_BOT_TOKEN:       ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL:         ${{ secrets.SLACK_CHANNEL }}
+          # ── Dedup state (optional — without it an alert may repeat each run) ──
+          GIST_TOKEN:            ${{ secrets.GIST_TOKEN }}
+          MONITOR_STATE_GIST:    ${{ secrets.MONITOR_STATE_GIST }}
+        run: python silvermic_monitor.py

@@ -379,6 +379,34 @@ def _ai_render_silvermic(sm_result, key: str):
     _render_ai_verdict(st.session_state.get(_rk))
 
 
+def _ai_filter_signals(signals):
+    """
+    Fast DeepSeek screen of each (item, imp, sig). Returns (approved, rejected):
+      approved = [(item, imp, sig), …]            — verdict not AVOID (or DeepSeek off/error)
+      rejected = [((item, imp, sig), verdict), …] — DeepSeek says AVOID
+    Fail-open: if DeepSeek is unconfigured or errors on a signal, it stays approved
+    (we never hide a real signal because of an AI outage).
+    """
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return signals, []
+    if not _dsa.is_configured():
+        return signals, []
+    approved, rejected = [], []
+    for tup in signals:
+        _it, _imp, _sig = tup
+        try:
+            v = _dsa.screen_signal(_sig, _imp)
+        except Exception:
+            v = None
+        if v is not None and v.ok and v.verdict == "AVOID":
+            rejected.append((tup, v))
+        else:
+            approved.append(tup)
+    return approved, rejected
+
+
 def _render_detail_panel(r, sig=None, all_news=None):
     """Expandable detail panel for a stock — used in Top Impacted & Underreacted tabs."""
     pd_ = r.price_data
@@ -714,8 +742,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.39"
-_APP_BUILD   = "25 Jun 2026 19:47"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.40"
+_APP_BUILD   = "25 Jun 2026 20:53"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1279,6 +1307,13 @@ with tab_signals:
         notrades = [(item,imp,sig) for item,imp,sig in _eq_signals
                     if sig.action=="NO TRADE" and sig.action in sig_action]
 
+        # ── DeepSeek auto-filter (fast screen): only AI-approved BUY/SHORT show ──
+        # AVOID-verdict signals move to a collapsed "Filtered by AI" list below.
+        with st.spinner("🤖 DeepSeek screening signals…"):
+            buys,   _buys_rej   = _ai_filter_signals(buys)
+            shorts, _shorts_rej = _ai_filter_signals(shorts)
+        _ai_rejected = _buys_rej + _shorts_rej
+
         sub1, sub2, sub3, sub4 = st.tabs([
             f"BUY ({len(buys)})",
             f"SHORT ({len(shorts)})",
@@ -1569,6 +1604,21 @@ with tab_signals:
         with sub2: render_signal_cards(shorts,   "signal-card-short")
         with sub3: render_signal_cards(avoids,   "signal-card-avoid")
         with sub4: render_signal_cards(notrades, "signal-card-avoid")
+
+        # ── Collapsed list of AI-rejected signals (DeepSeek said AVOID) ──
+        if _ai_rejected:
+            with st.expander(f"🤖 Filtered by AI — not tradeable ({len(_ai_rejected)})",
+                             expanded=False):
+                st.caption("DeepSeek screened these out — the data doesn't justify the trade:")
+                for (_tup, _v) in _ai_rejected:
+                    _it, _imp, _sig = _tup
+                    st.markdown(
+                        f"<b>{_sig.action} {_imp.symbol}</b> "
+                        f"<span style='color:#6b7280;font-size:11px'>· system {_sig.confidence}% · "
+                        f"</span><span style='color:#ff4455;font-size:11px'>AI AVOID ({_v.confidence}%)</span>",
+                        unsafe_allow_html=True)
+                    for _r in (_v.reasons or [])[:3]:
+                        st.caption(f"• {_r}")
 
 
 # ───────────────────────────────────────────────────────────────
@@ -2726,6 +2776,19 @@ with tab_silvermic:
                 and _sm_prev_signal != "LONG"
                 and _alert_decision in ("CONFIRMED", None)
             )
+            # ── DeepSeek gate: suppress the alert if the AI says the setup isn't tradeable ──
+            if _should_alert:
+                try:
+                    import deepseek_analyzer as _dsa
+                    if _dsa.is_configured():
+                        _sv = _dsa.screen_silvermic({
+                            "signal": _sig, "htf": _htf, "entry": _ent,
+                            "news_verdict": _sm_result.news_verdict,
+                        })
+                        if _sv.ok and _sv.verdict == "AVOID":
+                            _should_alert = False
+                except Exception:
+                    pass
             if _should_alert:
                 try:
                     from notifier import send_slack_alert

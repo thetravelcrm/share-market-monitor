@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL  = "https://api.deepseek.com/anthropic"
 _ENDPOINT  = f"{_BASE_URL}/v1/messages"
-_DEFAULT_MODEL  = "deepseek-v4-pro"   # deep reasoning model; override via DEEPSEEK_MODEL
+_DEFAULT_MODEL  = "deepseek-v4-pro"     # deep model for manual deep-dive (DEEPSEEK_MODEL)
+_SCREEN_MODEL   = "deepseek-v4-flash"   # fast model for bulk auto-screen (DEEPSEEK_SCREEN_MODEL)
 _TIMEOUT_FAST   = 45       # seconds — non-thinking calls
 _TIMEOUT_THINK  = 120      # seconds — reasoning/thinking calls run notably longer
 _THINK_HEADROOM = 1600     # extra max_tokens so reasoning doesn't starve the final answer
@@ -73,6 +74,11 @@ def get_model() -> str:
     return _get_secret("DEEPSEEK_MODEL", _DEFAULT_MODEL) or _DEFAULT_MODEL
 
 
+def get_screen_model() -> str:
+    """Fast model used for bulk auto-screening (no thinking) — cheap and quick."""
+    return _get_secret("DEEPSEEK_SCREEN_MODEL", _SCREEN_MODEL) or _SCREEN_MODEL
+
+
 def is_configured() -> bool:
     """True only when a DeepSeek API key is present. UI gates on this."""
     return bool(get_api_key())
@@ -92,23 +98,26 @@ def _thinking_enabled() -> bool:
 # ─────────────────────────────────────────────────────────────
 
 def _call(system: str, user: str, max_tokens: int = 500,
-          temperature: float = 0.2) -> tuple[bool, str]:
+          temperature: float = 0.2, model: Optional[str] = None,
+          force_no_thinking: bool = False) -> tuple[bool, str]:
     """
     POST one message to DeepSeek's Anthropic-compatible endpoint.
     Returns (ok, text). Never raises — failures come back as (False, reason).
+    `model` overrides the configured model; `force_no_thinking` disables reasoning
+    for fast bulk screening.
     """
     key = get_api_key()
     if not key:
         return False, "DeepSeek API key not configured (set DEEPSEEK_API_KEY in secrets)."
 
-    think = _thinking_enabled()
+    think = _thinking_enabled() and not force_no_thinking
     headers = {
         "x-api-key":         key,        # DeepSeek: fully supported
         "anthropic-version": "2023-06-01",  # ignored by DeepSeek but harmless
         "content-type":      "application/json",
     }
     payload = {
-        "model":      get_model(),
+        "model":      model or get_model(),
         # Leave headroom in thinking mode so reasoning tokens don't starve the answer.
         "max_tokens": (max_tokens + _THINK_HEADROOM) if think else max_tokens,
         "system":     system,
@@ -263,6 +272,51 @@ def analyze_signal(sig, imp, use_cache: bool = True) -> AIVerdict:
     if not ok:
         return AIVerdict("ERROR", 0, [], text, ok=False)
 
+    verdict = _parse_verdict(text, default_verdict="CAUTION")
+    if use_cache:
+        _cache[ckey] = verdict
+    return verdict
+
+
+def screen_signal(sig, imp, use_cache: bool = True) -> AIVerdict:
+    """
+    FAST auto-screen of one signal using the cheap model with no reasoning — for
+    bulk-filtering the Trade Signals list. Same skeptical criteria as analyze_signal,
+    just quicker/cheaper. Returns ok=False when DeepSeek isn't configured so callers
+    can fail open (show the signal rather than hide it on an outage).
+    """
+    if not is_configured():
+        return AIVerdict("ERROR", 0, [], "DeepSeek not configured.", ok=False)
+
+    facts = _signal_facts(sig, imp)
+    ckey = "screen:" + str(hash(facts))
+    if use_cache and ckey in _cache:
+        return _cache[ckey]
+
+    user = ("Quickly screen this trade setup. Is the PROPOSED ACTION actually "
+            "justified by the data, or is it a chase / non-catalyst?\n\n" + facts)
+    ok, text = _call(_SIGNAL_SYSTEM, user, max_tokens=300,
+                     model=get_screen_model(), force_no_thinking=True)
+    if not ok:
+        return AIVerdict("ERROR", 0, [], text, ok=False)
+    verdict = _parse_verdict(text, default_verdict="CAUTION")
+    if use_cache:
+        _cache[ckey] = verdict
+    return verdict
+
+
+def screen_silvermic(facts: dict, use_cache: bool = True) -> AIVerdict:
+    """FAST auto-screen of the SILVERMIC live signal (cheap model, no reasoning)."""
+    if not is_configured():
+        return AIVerdict("ERROR", 0, [], "DeepSeek not configured.", ok=False)
+    blob = json.dumps(facts, default=str, sort_keys=True)
+    ckey = "smscreen:" + str(hash(blob))
+    if use_cache and ckey in _cache:
+        return _cache[ckey]
+    ok, text = _call(_SILVER_SYSTEM, "Current SILVERMIC state:\n\n" + blob,
+                     max_tokens=300, model=get_screen_model(), force_no_thinking=True)
+    if not ok:
+        return AIVerdict("ERROR", 0, [], text, ok=False)
     verdict = _parse_verdict(text, default_verdict="CAUTION")
     if use_cache:
         _cache[ckey] = verdict
