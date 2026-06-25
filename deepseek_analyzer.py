@@ -8,8 +8,9 @@
 #      models   : deepseek-v4-pro (deep) | deepseek-v4-flash (fast, default)
 #
 #  Config (Streamlit Cloud → Settings → Secrets, or env vars):
-#      DEEPSEEK_API_KEY = "sk-..."          # REQUIRED
-#      DEEPSEEK_MODEL   = "deepseek-v4-flash"  # optional override
+#      DEEPSEEK_API_KEY  = "sk-..."             # REQUIRED
+#      DEEPSEEK_MODEL    = "deepseek-v4-pro"    # optional; default deepseek-v4-pro
+#      DEEPSEEK_THINKING = "on"                 # optional; reasoning mode (default on)
 #
 #  GROUNDING RULE: every function feeds the model ONLY the numbers this app
 #  already computed. The system prompt forbids inventing prices/news. This is
@@ -30,8 +31,10 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL  = "https://api.deepseek.com/anthropic"
 _ENDPOINT  = f"{_BASE_URL}/v1/messages"
-_DEFAULT_MODEL = "deepseek-v4-flash"
-_TIMEOUT   = 40            # seconds — real-time but tolerant of a slow first token
+_DEFAULT_MODEL  = "deepseek-v4-pro"   # deep reasoning model; override via DEEPSEEK_MODEL
+_TIMEOUT_FAST   = 45       # seconds — non-thinking calls
+_TIMEOUT_THINK  = 120      # seconds — reasoning/thinking calls run notably longer
+_THINK_HEADROOM = 1600     # extra max_tokens so reasoning doesn't starve the final answer
 
 # In-process cache so Streamlit reruns / repeat clicks don't re-bill identical calls.
 _cache: dict[str, "AIVerdict"] = {}
@@ -75,6 +78,15 @@ def is_configured() -> bool:
     return bool(get_api_key())
 
 
+def _thinking_enabled() -> bool:
+    """
+    Reasoning/thinking mode. ON by default (best analysis quality) — set
+    DEEPSEEK_THINKING = "off" in secrets to disable it for lower cost/latency.
+    """
+    val = _get_secret("DEEPSEEK_THINKING", "on").strip().lower()
+    return val not in ("0", "off", "false", "no")
+
+
 # ─────────────────────────────────────────────────────────────
 #  Low-level call
 # ─────────────────────────────────────────────────────────────
@@ -89,6 +101,7 @@ def _call(system: str, user: str, max_tokens: int = 500,
     if not key:
         return False, "DeepSeek API key not configured (set DEEPSEEK_API_KEY in secrets)."
 
+    think = _thinking_enabled()
     headers = {
         "x-api-key":         key,        # DeepSeek: fully supported
         "anthropic-version": "2023-06-01",  # ignored by DeepSeek but harmless
@@ -96,16 +109,24 @@ def _call(system: str, user: str, max_tokens: int = 500,
     }
     payload = {
         "model":      get_model(),
-        "max_tokens": max_tokens,
-        "temperature": temperature,
+        # Leave headroom in thinking mode so reasoning tokens don't starve the answer.
+        "max_tokens": (max_tokens + _THINK_HEADROOM) if think else max_tokens,
         "system":     system,
         "messages":   [{"role": "user", "content": user}],
     }
+    if think:
+        # DeepSeek's Anthropic-compatible endpoint accepts the Anthropic `thinking`
+        # field ('budget_tokens' is ignored by DeepSeek). A custom temperature is
+        # disallowed while thinking is on, so it is omitted. The reasoning comes back
+        # as non-text content blocks, which _parse_verdict / the parser skip.
+        payload["thinking"] = {"type": "enabled", "budget_tokens": 2048}
+    else:
+        payload["temperature"] = temperature
     try:
-        resp = requests.post(_ENDPOINT, headers=headers,
-                             data=json.dumps(payload), timeout=_TIMEOUT)
+        resp = requests.post(_ENDPOINT, headers=headers, data=json.dumps(payload),
+                             timeout=_TIMEOUT_THINK if think else _TIMEOUT_FAST)
     except requests.exceptions.Timeout:
-        return False, "DeepSeek request timed out — try again."
+        return False, "DeepSeek request timed out — try again (thinking mode is slower)."
     except Exception as exc:
         return False, f"DeepSeek network error: {exc}"
 
