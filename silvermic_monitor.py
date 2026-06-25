@@ -110,10 +110,22 @@ def main() -> int:
         return 1
     log.info("Fyers connected")
 
-    # 2. SILVERMIC signal
+    # 2. SILVERMIC signal — use the SAME tuned thresholds as the app (SM_* env)
+    #    so the cron and the SILVERMIC tab generate identical signals.
+    def _f(name: str, default: float) -> float:
+        try:
+            return float(os.environ.get(name, default))
+        except Exception:
+            return float(default)
+
     from silvermic_strategy import analyze
     try:
-        res = analyze(token)
+        res = analyze(
+            token,
+            rsi_entry_min=_f("SM_RSI_ENTRY_MIN", 52.0),
+            ema_spread_min=_f("SM_EMA_SPREAD_MIN", 0.09),
+            rsi_bull_min=_f("SM_RSI_BULL_LEVEL", 50.0),
+        )
     except Exception as exc:
         log.error("SILVERMIC analyze failed: %s", exc)
         return 1
