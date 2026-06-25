@@ -153,6 +153,14 @@ def _compute_rollover_gaps(
                        "adjustment is approximate; indicators may be inaccurate",
                        sorted(missing))
 
+    # Snapshot each segment's RAW last close/timestamp BEFORE any gap is applied.
+    # Junction gaps must be measured in raw price space: once an older segment has
+    # been shifted by a newer junction's gap, reading its close here (against a
+    # fresh, unshifted newer price) under-corrects every segment below it, leaving
+    # a phantom rollover step in the oldest contract(s).
+    _raw_last_ts    = [s["df"].index[-1] for s in segments]
+    _raw_last_close = [float(s["df"]["Close"].iloc[-1]) for s in segments]
+
     # Walk newest→oldest, compute gap at each junction from the 15m data
     for i in range(len(segments) - 1, 0, -1):
         older = segments[i - 1]
@@ -162,8 +170,8 @@ def _compute_rollover_gaps(
         if key in _gap_cache:
             gap = _gap_cache[key]
         else:
-            older_last_ts    = older["df"].index[-1]
-            older_last_close = float(older["df"]["Close"].iloc[-1])
+            older_last_ts    = _raw_last_ts[i - 1]
+            older_last_close = _raw_last_close[i - 1]
 
             # Fetch newer contract's 15m bars around the transition
             from_d = (older_last_ts - timedelta(days=3)).strftime("%Y-%m-%d")
@@ -256,6 +264,13 @@ def get_continuous(token: str, resolution: str, days_back: int = 180) -> pd.Data
         older = segments[i - 1]
         newer = segments[i]
         key = (older["contract"]["symbol"], newer["contract"]["symbol"])
+        if key not in _gap_cache:
+            # Pass-2 adjacency diverged from the 15m gap pass (a contract had data
+            # at one resolution but not the other). This junction stays unadjusted,
+            # so a phantom rollover step may remain — warn rather than fail silently.
+            logger.warning("no cached rollover gap for %s→%s at resolution %s — "
+                           "junction left UNADJUSTED (phantom step possible)",
+                           key[0], key[1], resolution)
         gap = _gap_cache.get(key, 0.0)
         if abs(gap) < 1e-6:
             continue

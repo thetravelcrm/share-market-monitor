@@ -264,6 +264,20 @@ def _confidence_score(
             elif tech.trend == "Sideways": score += 8   # moderate
             # Uptrend: 0 pts — momentum stock, risky short
 
+        # ── Chase penalty — a fresh entry into an already-exhausted move ──
+        # A BUY into RSI>72 / Stoch>80, or right under resistance, is chasing;
+        # a SHORT into RSI<28 / Stoch<20, or right above support, is the mirror.
+        # Without this, momentum bonuses alone can score an overbought, at-
+        # resistance, low-volume setup at 100% (e.g. a gainers-list pop).
+        if direction == "BUY":
+            if tech.rsi_14 > 72:                                 score -= 10
+            if getattr(tech, "stoch_overbought", False):         score -= 6
+            if tech.near_resistance and not tech.near_support:   score -= 6
+        else:  # SHORT
+            if tech.rsi_14 < 28:                                 score -= 10
+            if getattr(tech, "stoch_oversold", False):           score -= 6
+            if tech.near_support and not tech.near_resistance:   score -= 6
+
         # Near support/resistance (+10 pts)
         if direction == "BUY" and tech.near_support:
             score += 10

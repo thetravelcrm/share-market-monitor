@@ -112,16 +112,15 @@ def prefetch_prices(symbols: list[str]) -> None:
                 l52w     = float(hist["Low"].min())
                 currency = "INR"
 
-            if current <= 0 or prev <= 0:
-                _price_cache[sym] = (now, None)
-                continue
-
             day_chg   = round((current - prev) / prev * 100, 2)
             day_vol   = int(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else 0
             avg_vol   = int(hist["Volume"].iloc[-20:].mean()) if len(hist) >= 20 and "Volume" in hist.columns else day_vol
             vol_ratio = round(day_vol / avg_vol, 2) if avg_vol > 0 else 1.0
             _skip_vol = sym in _MCX_PROXY
-            if not _skip_vol and day_vol == 0:
+            # Same sanity gate as the per-symbol path (_fetch_price_uncached):
+            # rejects zero/negative prices, stale zero-volume bars, and >30%
+            # single-day jumps that usually mean a bad split adjustment or glitch.
+            if not _validate_price_data(current, prev, day_vol, sym, skip_volume=_skip_vol):
                 _price_cache[sym] = (now, None)
                 continue
 
@@ -216,7 +215,9 @@ _MCX_LOCAL_PREMIUM: dict[str, float] = {
 }
 
 
-_usd_inr_cache: dict = {"rate": 84.0, "fetched_at": 0.0}
+# Fallback rate used only when the live USD/INR fetch fails. Keep this roughly
+# current — a stale value misprices every COMEX→MCX metal conversion by its drift.
+_usd_inr_cache: dict = {"rate": 86.5, "fetched_at": 0.0}
 
 
 def _fetch_usd_inr() -> float:
@@ -304,6 +305,7 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
         fq = get_quote(symbol, _token) if _token else None
         if fq and fq["last_price"] > 0:
             avg_vol = fq["volume"]
+            _vol_ratio_override = None   # set for MCX-COMEX where avg_vol is a different instrument
             h52w = fq["high"]; l52w = fq["low"]
             tech = None
             is_mcx_sym = symbol in _MCX_SYMBOLS
@@ -313,6 +315,13 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
                 if len(_h) >= 20:
                     avg_vol = int(_h["Volume"].iloc[-20:].mean())
                     if is_mcx_comex:
+                        # vol_ratio must compare like with like. fq["volume"] is the
+                        # MCX contract's volume but avg_vol here is the COMEX proxy's —
+                        # different instruments. Derive the ratio from the proxy's own
+                        # current-vs-average volume so it stays meaningful.
+                        _cur_proxy_vol = float(_h["Volume"].iloc[-1])
+                        _vol_ratio_override = (round(_cur_proxy_vol / avg_vol, 2)
+                                               if avg_vol > 0 else 1.0)
                         # 52w range in INR using same conversion as COMEX fallback
                         _conv_r = _MCX_CONV[symbol]
                         _prem_r = _MCX_LOCAL_PREMIUM.get(symbol, 1.0)
@@ -330,7 +339,8 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
             except Exception as exc:
                 logger.debug("Fyers yfinance supplement failed for %s: %s", symbol, exc)
             lot_s, lot_u = _MCX_LOT_SIZES.get(symbol, (1, "")) if is_mcx_sym else (1, "")
-            vol_ratio = round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0
+            vol_ratio = (_vol_ratio_override if _vol_ratio_override is not None
+                         else (round(fq["volume"] / avg_vol, 2) if avg_vol > 0 else 1.0))
             if _validate_price_data(fq["last_price"], fq["prev_close"], fq["volume"], symbol,
                                     skip_volume=is_mcx_sym):
                 return PriceData(
@@ -447,6 +457,12 @@ def _calculate_impact_strength(
     match: StockMatch,
 ) -> tuple[str, float]:
     score = abs(sentiment.score)
+
+    # Market-recap / gainers-losers lists merely mention the stock and are NOT
+    # catalysts — never let them reach an actionable (HIGH/EXTREME) strength.
+    # The strict filter then rejects them, so no signal fires off a daily list.
+    if getattr(sentiment, "is_recap", False):
+        return "LOW", score
 
     if match.relation == "Direct":
         # Direct mention: amplify + allow category boost → can reach EXTREME

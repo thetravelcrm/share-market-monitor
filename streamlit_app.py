@@ -292,6 +292,93 @@ def impact_score(strength: str) -> float:
     return _IMPACT_SCORE.get(strength, 3.0)
 
 
+# ═══════════════════════════════════════════════════════════════
+#  DeepSeek AI analysis helpers (real-time, grounded second opinion)
+# ═══════════════════════════════════════════════════════════════
+
+def _render_ai_verdict(v):
+    """Render a deepseek_analyzer.AIVerdict (CONFIRM/CAUTION/AVOID + reasons)."""
+    if v is None:
+        return
+    if not getattr(v, "ok", False):
+        st.caption(f"🤖 {getattr(v, 'raw', 'AI unavailable')}")
+        return
+    _c = {"CONFIRM": "#00ff88", "CAUTION": "#ffaa33", "AVOID": "#ff4455",
+          "INFO": "#a8b0d0"}.get(v.verdict, "#a8b0d0")
+    st.markdown(
+        f"<b style='color:{_c}'>🤖 DeepSeek: {v.verdict}</b> "
+        f"<span style='color:#6b7280;font-size:11px'>· {v.confidence}% conviction</span>",
+        unsafe_allow_html=True,
+    )
+    for _rsn in (v.reasons or [])[:4]:
+        st.markdown(f"<span style='font-size:12px;color:#a8b0d0'>• {_rsn}</span>",
+                    unsafe_allow_html=True)
+    st.caption("AI second opinion on the data above — not financial advice.")
+
+
+def _ai_render_check(sig, imp, key: str):
+    """Per-signal '🤖 AI Reality Check' button + result. Hidden unless configured."""
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return
+    if not _dsa.is_configured():
+        return
+    _rk = "aires_" + key
+    if st.button("🤖 AI Reality Check", key="aibtn_" + key,
+                 help="DeepSeek second opinion, grounded only in this signal's data"):
+        with st.spinner("DeepSeek analysing this setup…"):
+            st.session_state[_rk] = _dsa.analyze_signal(sig, imp)
+    _render_ai_verdict(st.session_state.get(_rk))
+
+
+def _ai_render_market_brief(signals, key: str, context: str = ""):
+    """Top-level '🤖 AI Market Brief' button + result. signals: [(item, imp, sig), …]."""
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return
+    if not _dsa.is_configured():
+        st.caption("🤖 Add DEEPSEEK_API_KEY in Settings → Secrets to enable AI analysis.")
+        return
+    _rk = "brief_" + key
+    if st.button("🤖 AI Market Brief", key="briefbtn_" + key,
+                 help="DeepSeek summary of the strongest setups in this scan"):
+        _ranked = sorted(signals, key=lambda t: getattr(t[2], "confidence", 0), reverse=True)
+        _facts = [_dsa.facts_for_brief(_s, _i) for _it, _i, _s in _ranked[:10]
+                  if getattr(_s, "action", "") in ("BUY", "SHORT")]
+        with st.spinner("DeepSeek writing market brief…"):
+            st.session_state[_rk] = _dsa.market_brief(_facts, extra_context=context)
+    _v = st.session_state.get(_rk)
+    if _v is not None:
+        if getattr(_v, "ok", False):
+            st.markdown(_v.raw)
+        else:
+            st.caption(f"🤖 {_v.raw}")
+
+
+def _ai_render_silvermic(sm_result, key: str):
+    """'🤖 AI Verdict' button + result for the live SILVERMIC signal."""
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return
+    if not _dsa.is_configured():
+        return
+    _facts = {
+        "signal":       getattr(sm_result, "signal", None),
+        "htf":          getattr(sm_result, "htf", None),
+        "entry":        getattr(sm_result, "entry", None),
+        "news_verdict": getattr(sm_result, "news_verdict", None),
+    }
+    _rk = "smai_" + key
+    if st.button("🤖 AI Verdict (DeepSeek)", key="smaibtn_" + key,
+                 help="DeepSeek second opinion on the live silver setup"):
+        with st.spinner("DeepSeek analysing silver setup…"):
+            st.session_state[_rk] = _dsa.analyze_silvermic(_facts)
+    _render_ai_verdict(st.session_state.get(_rk))
+
+
 def _render_detail_panel(r, sig=None, all_news=None):
     """Expandable detail panel for a stock — used in Top Impacted & Underreacted tabs."""
     pd_ = r.price_data
@@ -612,8 +699,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.35"
-_APP_BUILD   = "06 May 2026 14:00"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.36"
+_APP_BUILD   = "25 Jun 2026 18:36"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1156,6 +1243,7 @@ with tab_signals:
     if not result.all_signals:
         st.info("No signals — try lowering min impact or extending lookback hours.")
     else:
+        _ai_render_market_brief(result.all_signals, key="signals_main")
         fc1, fc2, fc3 = st.columns(3)
         sig_action   = fc1.multiselect("Action", ["BUY","SHORT","AVOID","NO TRADE"], default=["BUY","SHORT"])
         sig_min_conf = fc2.slider("Min confidence", 0, 100, 40, step=5)
@@ -1459,6 +1547,8 @@ with tab_signals:
                                   sig.entry_low, sig.stop_loss, sig.target1, sig.target2,
                                   sig.risk_reward, sig.confidence, sig.edge_type)
                         st.success(f"✅ {sig.symbol} logged to Trade Journal")
+                # ── DeepSeek AI reality-check on this signal ──
+                _ai_render_check(sig, imp, key=f"card_{card_class}_{_card_idx}_{sig.symbol}")
 
         with sub1: render_signal_cards(buys,     "signal-card-buy")
         with sub2: render_signal_cards(shorts,   "signal-card-short")
@@ -2604,6 +2694,9 @@ with tab_silvermic:
             _ent  = _sm_result.entry
             _sig  = _sm_result.signal
             _ago  = int((datetime.now(timezone.utc) - _sm_result.fetched_at).total_seconds() / 60)
+
+            # ── DeepSeek AI verdict on the live SILVERMIC signal ──
+            _ai_render_silvermic(_sm_result, key="silvermic_live")
 
             # ── Slack alert: WAIT → LONG transition AND news CONFIRMED ──
             _sm_bot_token   = _sm_cfg.get("slack_bot_token", "")

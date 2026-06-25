@@ -368,7 +368,14 @@ def compute_technicals(hist: pd.DataFrame, current_price: float) -> Optional[Tec
 
         # ── Bollinger Bands ────────────────────────────────────
         bb_lower, bb_upper, bb_pct = _bollinger(close)
-        bb_squeeze = (bb_upper - bb_lower) / current_price < 0.02 if current_price > 0 else False
+        # Require a full 20-bar window: _bollinger collapses upper==lower for
+        # shorter series, which would otherwise force a permanent (false) squeeze
+        # and feed spurious pre_breakout / BB-squeeze confidence points.
+        bb_squeeze = (
+            len(close) >= 20
+            and current_price > 0
+            and (bb_upper - bb_lower) / current_price < 0.02
+        )
 
         # ── ATR(14) — compute early for adaptive thresholds ────
         atr_val, atr_pct_val = _atr(high, low, close, current_price)

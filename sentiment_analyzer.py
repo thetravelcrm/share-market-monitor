@@ -54,6 +54,7 @@ class SentimentResult:
     macro_sectors: list[str]   # sectors affected via macro keywords
     news_type: str      = "Ongoing"     # "Breaking" | "Ongoing" | "Rumor"
     time_relevance: str = "Short-term"  # "Immediate" | "Short-term" | "Lagging"
+    is_recap: bool      = False         # market recap / gainers-losers list (NOT a catalyst)
 
 
 # ── Negation pre-processing (fixes "not bullish" → negative) ──
@@ -94,6 +95,24 @@ _FUTURE_KW = ["by april", "by may", "by june", "by july", "by august", "by septe
               "will be", "to be held", "hearing on", "court date"]
 
 
+# ── Market-recap / list detection ─────────────────────────────
+# Headlines that merely LIST many stocks (gainers/losers/movers recaps) are not
+# catalysts. Without this, a "Top Gainers & Losers" headline that happens to name
+# a stock gets mapped as a Direct mention and amplified to EXTREME impact, firing
+# a high-confidence trade on a stock that simply appeared in a daily list.
+_RECAP_KW = [
+    "top gainers", "top losers", "gainers and losers", "gainers & losers",
+    "biggest gainers", "biggest losers", "top gainers and losers", "top movers",
+    "stocks to watch", "stocks in focus", "buzzing stocks", "stocks in the news",
+    "stocks in news", "most active stocks", "f&o ban", "market wrap", "closing bell",
+]
+
+
+def _is_recap(text: str) -> bool:
+    tl = text.lower()
+    return any(kw in tl for kw in _RECAP_KW)
+
+
 def _classify_news(text: str) -> tuple[str, str]:
     """Return (news_type, time_relevance)."""
     tl = text.lower()
@@ -121,6 +140,7 @@ def analyze(item: NewsItem) -> SentimentResult:
     category = _detect_category(text)
     macro_sectors = _detect_macro_sectors(text)
     news_type, time_rel = _classify_news(text)
+    is_recap = _is_recap(item.raw_text)
 
     return SentimentResult(
         label=label,
@@ -132,6 +152,7 @@ def analyze(item: NewsItem) -> SentimentResult:
         macro_sectors=macro_sectors,
         news_type=news_type,
         time_relevance=time_rel,
+        is_recap=is_recap,
     )
 
 
