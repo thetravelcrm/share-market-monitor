@@ -599,7 +599,22 @@ with st.sidebar:
             return ""
 
         if is_configured():
-            # Restore token from file if session_state lost it (page refresh)
+            # Expire a stale token mid-session: Fyers tokens die at midnight IST, but
+            # a session/tab left open across midnight keeps the old token in
+            # session_state, so the date-gated reload below never re-fires. If the
+            # saved session file is from a previous IST day, drop the in-session token
+            # so auto-login re-authenticates. A missing file is left alone so we never
+            # nuke a token that was just set this session.
+            try:
+                _today_ist = (datetime.now(timezone.utc)+timedelta(hours=5,minutes=30)).strftime("%Y-%m-%d")
+                if (st.session_state.get("fyers_token")
+                        and _os.path.exists(".fyers_session.json")
+                        and _json.load(open(".fyers_session.json")).get("date") != _today_ist):
+                    st.session_state.pop("fyers_token", None)
+            except Exception:
+                pass
+
+            # Restore token from file if session_state lost it (page refresh / expiry)
             if not st.session_state.get("fyers_token"):
                 saved = _fyers_load()
                 if saved:
@@ -699,8 +714,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.38"
-_APP_BUILD   = "25 Jun 2026 19:35"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.39"
+_APP_BUILD   = "25 Jun 2026 19:47"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
