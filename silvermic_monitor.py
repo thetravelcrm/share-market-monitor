@@ -81,22 +81,15 @@ def _save_state(state: dict) -> None:
 #  Main
 # ─────────────────────────────────────────────────────────────
 
-def _ist_now() -> datetime:
-    return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-
-
-def _market_open(ist: datetime) -> bool:
-    """MCX commodities trade ~09:00–23:30 IST, Mon–Fri."""
-    if ist.weekday() >= 5:
-        return False
-    mins = ist.hour * 60 + ist.minute
-    return 9 * 60 <= mins <= 23 * 60 + 30
-
-
 def main() -> int:
-    ist = _ist_now()
-    if not _market_open(ist):
-        log.info("MCX closed (%s IST) — nothing to do", ist.strftime("%a %H:%M"))
+    # Holiday- and session-aware market check (e.g. Moharram: morning closed,
+    # evening open). Without this the monitor would act on stale data during a
+    # closed session and could fire a spurious alert.
+    from mcx_calendar import is_market_open, session_label, ist_now
+    ist = ist_now()
+    if not is_market_open(ist):
+        log.info("MCX closed (%s, %s IST) — nothing to do",
+                 session_label(ist), ist.strftime("%a %H:%M"))
         return 0
 
     # 1. Fyers auto-login (TOTP) — credentials from env
