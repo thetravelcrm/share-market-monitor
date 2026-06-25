@@ -43,6 +43,10 @@ jobs:
           # ── DeepSeek (optional — no key => alert on technical LONG only) ──
           DEEPSEEK_API_KEY:      ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_SCREEN_MODEL: ${{ secrets.DEEPSEEK_SCREEN_MODEL }}
+          # ── SILVERMIC thresholds (optional — match your app's tuned values) ──
+          SM_RSI_ENTRY_MIN:      ${{ secrets.SM_RSI_ENTRY_MIN }}
+          SM_EMA_SPREAD_MIN:     ${{ secrets.SM_EMA_SPREAD_MIN }}
+          SM_RSI_BULL_LEVEL:     ${{ secrets.SM_RSI_BULL_LEVEL }}
           # ── Slack (required for alerts) ──
           SLACK_BOT_TOKEN:       ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL:         ${{ secrets.SLACK_CHANNEL }}
