@@ -57,6 +57,8 @@ NEWS_FEEDS = {
     # ── Macro / Fed / Dollar — key silver drivers ────────────────
     "Reuters Commodities":       "https://feeds.reuters.com/reuters/commoditiesNews",
     "Reuters US Economy":        "https://feeds.reuters.com/reuters/USdollarRSS",
+    "Investing.com Economy":     "https://in.investing.com/rss/news_14.rss",   # Fed / inflation / GDP
+    "Investing.com Forex":       "https://in.investing.com/rss/news_1.rss",    # USD / DXY moves
 }
 
 # ── Impact Thresholds ─────────────────────────────────────────

@@ -379,6 +379,42 @@ def _ai_render_silvermic(sm_result, key: str):
     _render_ai_verdict(st.session_state.get(_rk))
 
 
+def _silvermic_perfect_gate(sm_result):
+    """
+    3-gate SILVERMIC perfect-entry check: technical LONG + silver news CONFIRMED +
+    DeepSeek pro/thinking CONFIRM (>=70%). The deep (pro + thinking) call runs ONLY
+    when the first two gates are green, and is throttled to once / 5 min via
+    session_state so a sustained setup doesn't re-bill on every auto-refresh.
+    Returns (is_perfect: bool, deep_verdict_or_None).
+    """
+    import time as _t
+    ent = getattr(sm_result, "entry", None) or {}
+    nv  = getattr(sm_result, "news_verdict", None) or {}
+    tech_long      = ent.get("signal") == "LONG"          # raw technical signal
+    news_confirmed = nv.get("decision") == "CONFIRMED"
+    if not (tech_long and news_confirmed):
+        st.session_state.pop("sm_deep_verdict", None)
+        st.session_state.pop("sm_deep_ts", None)
+        return False, None
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return False, None
+    if not _dsa.is_configured():
+        return False, None
+    _now    = _t.time()
+    _last   = st.session_state.get("sm_deep_ts", 0)
+    _cached = st.session_state.get("sm_deep_verdict")
+    if _cached is None or (_now - _last) > 300:           # refresh at most every 5 min
+        _facts = {"signal": "LONG", "htf": getattr(sm_result, "htf", None),
+                  "entry": ent, "news_verdict": nv}
+        with st.spinner("🤖 DeepSeek (pro) running final-gate analysis…"):
+            _cached = _dsa.confirm_silvermic_entry(_facts)
+        st.session_state["sm_deep_verdict"] = _cached
+        st.session_state["sm_deep_ts"]      = _now
+    return _dsa.is_perfect_entry(_cached), _cached
+
+
 def _ai_filter_signals(signals):
     """
     Fast DeepSeek screen of each (item, imp, sig). Returns (approved, rejected):
@@ -742,8 +778,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.43"
-_APP_BUILD   = "25 Jun 2026 23:59"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.44"
+_APP_BUILD   = "26 Jun 2026 00:31"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2763,51 +2799,45 @@ with tab_silvermic:
             # ── DeepSeek AI verdict on the live SILVERMIC signal ──
             _ai_render_silvermic(_sm_result, key="silvermic_live")
 
-            # ── Slack alert: WAIT → LONG transition AND news CONFIRMED ──
-            _sm_bot_token   = _sm_cfg.get("slack_bot_token", "")
-            _sm_channel     = _sm_cfg.get("slack_channel", "#general")
-            _sm_prev_signal = st.session_state.get("sm_prev_signal", "WAIT")
-            _nv_alert       = _sm_result.news_verdict or {}
-            _alert_decision = _nv_alert.get("decision")  # None if no news data
-            # Only alert when news is CONFIRMED (or no news data at all)
-            _should_alert = (
-                _sm_bot_token
-                and _sig == "LONG"
-                and _sm_prev_signal != "LONG"
-                and _alert_decision in ("CONFIRMED", None)
-            )
-            # ── DeepSeek gate: suppress the alert if the AI says the setup isn't tradeable ──
-            if _should_alert:
-                try:
-                    import deepseek_analyzer as _dsa
-                    if _dsa.is_configured():
-                        _sv = _dsa.screen_silvermic({
-                            "signal": _sig, "htf": _htf, "entry": _ent,
-                            "news_verdict": _sm_result.news_verdict,
-                        })
-                        if _sv.ok and _sv.verdict == "AVOID":
-                            _should_alert = False
-                except Exception:
-                    pass
-            if _should_alert:
-                try:
+            # ── 3-gate PERFECT ENTRY: tech LONG + news CONFIRMED + DeepSeek pro CONFIRM ──
+            _is_perfect, _deep_v = _silvermic_perfect_gate(_sm_result)
+            st.session_state["sm_is_perfect"] = _is_perfect
+            st.session_state["sm_deep_v"]     = _deep_v
+
+            # Slack on a perfect entry — market-hours guarded + shared dedup so the
+            # app and the cron never double-send. Fires once per setup/day.
+            _sm_bot_token = _sm_cfg.get("slack_bot_token", "")
+            _sm_channel   = _sm_cfg.get("slack_channel", "#general")
+            try:
+                from mcx_calendar import is_market_open as _mkt_open, ist_now as _mkt_ist
+                import monitor_state as _mstate
+                _today_ist = _mkt_ist().strftime("%Y-%m-%d")
+                if (_is_perfect and _sm_bot_token and _mkt_open()
+                        and not _mstate.already_alerted(_today_ist, "PERFECT")):
                     from notifier import send_slack_alert
-                    _insights  = _nv_alert.get("top_insights", [])
-                    _ep        = _ent.get("entry_price", 0)
-                    send_slack_alert(_sm_bot_token, _sm_channel, {
+                    _nv_alert = _sm_result.news_verdict or {}
+                    _insights = _nv_alert.get("top_insights", [])
+                    _ep       = (_sm_result.entry or {}).get("entry_price", 0)
+                    _dn = ((f"AI CONFIRM {_deep_v.confidence}% — "
+                            + (_deep_v.reasons[0] if _deep_v and _deep_v.reasons else "clean setup"))
+                           if _deep_v else "Technical + News confirmed")
+                    if send_slack_alert(_sm_bot_token, _sm_channel, {
+                        "header":        "🎯 PERFECT ENTRY — SILVERMIC LONG",
                         "entry":         _ep,
-                        "stop_loss":     _ent.get("stop_loss", 0),
+                        "stop_loss":     (_sm_result.entry or {}).get("stop_loss", 0),
                         "t1":            round(_ep + 1500, 0),
                         "t2":            round(_ep + 4000, 0),
                         "t3":            round(_ep + 11000, 0),
                         "news_score":    _nv_alert.get("score", "N/A"),
                         "news_label":    _nv_alert.get("label", "N/A"),
-                        "news_decision": _nv_alert.get("decision", "N/A"),
-                        "top_insight":   _insights[0] if _insights else "N/A",
-                    })
-                except Exception:
-                    pass
-            st.session_state["sm_prev_signal"] = _sig
+                        "news_decision": _dn,
+                        "top_insight":   _insights[0] if _insights else "Technical + News + AI all CONFIRMED",
+                    }):
+                        _mstate.mark_alerted(_today_ist, "PERFECT")
+                elif not _is_perfect and _mstate.already_alerted(_today_ist, "PERFECT"):
+                    _mstate.reset(_today_ist)   # setup gone — allow the next one to alert
+            except Exception:
+                pass
 
             # ── Auto-record entry when LONG signal fires ──────────────
             if "sm_active_trade" not in st.session_state:
@@ -2942,8 +2972,14 @@ with tab_silvermic:
                 _nv = _sm_result.news_verdict
                 _tech_long = _ent["signal"] == "LONG"  # raw technical signal
                 _news_decision = _nv["decision"] if _nv else None
+                _perfect = st.session_state.get("sm_is_perfect", False)
 
-                if _tech_long and _news_decision == "CONFIRMED":
+                if _perfect:
+                    _box_color  = "#00ffaa"
+                    _box_bg     = "#06251a"
+                    _box_border = "#00ffaa"
+                    _box_label  = "🎯 PERFECT ENTRY"
+                elif _tech_long and _news_decision == "CONFIRMED":
                     _box_color  = "#00ff88"
                     _box_bg     = "#0a2015"
                     _box_border = "#00ff88"
@@ -2978,6 +3014,14 @@ with tab_silvermic:
                     f"</div>",
                     unsafe_allow_html=True,
                 )
+
+                if _perfect:
+                    _dv = st.session_state.get("sm_deep_v")
+                    st.success("Perfect time to enter — Technical + News + DeepSeek (Pro) all CONFIRMED.",
+                               icon="🎯")
+                    if _dv and getattr(_dv, "reasons", None):
+                        for _r in _dv.reasons[:3]:
+                            st.caption(f"• {_r}")
 
                 if _sig == "LONG":
                     from silvermic_strategy import LOT_SIZE as _SM_LOT

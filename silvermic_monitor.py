@@ -2,100 +2,56 @@
 """
 silvermic_monitor.py — headless SILVERMIC monitor for GitHub Actions (cron).
 
-Runs without Streamlit so it can alert even when no browser is open:
-    Fyers auto-login (TOTP) → SILVERMIC signal → DeepSeek screen → Slack alert.
+3-gate "perfect entry" pipeline, runs without a browser open:
+    market open (holiday-aware) → Fyers auto-login (TOTP) → SILVERMIC signal
+    → GATE 1+2: technical LONG AND silver news CONFIRMED
+    → GATE 3: DeepSeek pro + thinking final confirmation (CONFIRM, high conviction)
+    → Slack "PERFECT ENTRY" alert.
 
-All config comes from ENVIRONMENT VARIABLES (set as GitHub repo Secrets):
+Config via ENVIRONMENT VARIABLES (GitHub repo Secrets):
     FYERS_CLIENT_ID, FYERS_SECRET_KEY, FYERS_ID, FYERS_TOTP_SECRET, FYERS_PIN
-    DEEPSEEK_API_KEY            (optional — if absent, no AI gate; alert on LONG)
-    DEEPSEEK_SCREEN_MODEL       (optional — default deepseek-v4-flash)
-    SLACK_BOT_TOKEN             (xoxb-… bot token)
-    SLACK_CHANNEL              (e.g. "#general" or a channel ID)
-    GITHUB_TOKEN + MONITOR_STATE_GIST (or GIST_HISTORY_ID)  (optional — dedup state)
+    SM_RSI_ENTRY_MIN, SM_EMA_SPREAD_MIN, SM_RSI_BULL_LEVEL   (match the app)
+    DEEPSEEK_API_KEY (+ optional DEEPSEEK_MODEL / DEEPSEEK_THINKING)
+    SLACK_BOT_TOKEN, SLACK_CHANNEL
+    GIST_TOKEN + MONITOR_STATE_GIST   (dedup state, shared with the app)
 
-Dedup: a Slack alert fires only on a WAIT→LONG transition for the day. The
-"last alerted" state is kept in a GitHub Gist; without it the alert may repeat
-each run while LONG (keep the cron interval >= 15 min to limit this).
+Dedup: the "PERFECT" alert fires once per setup/day via the shared gist state
+(monitor_state), so the app and cron never double-send.
 
-Exit code is always 0 on a clean run (including "market closed" / "not LONG")
-so the workflow shows green; only unexpected errors return non-zero.
+Exit code is 0 on every clean run (including "market closed" / "not a setup");
+only unexpected errors return non-zero.
 """
 from __future__ import annotations
 
 import os
 import sys
-import json
 import logging
-from datetime import datetime, timezone, timedelta
-
-import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [monitor] %(levelname)s: %(message)s")
 log = logging.getLogger("silvermic_monitor")
 
-_STATE_FILE = "silvermic_monitor_state.json"
 
-
-# ─────────────────────────────────────────────────────────────
-#  Gist-backed dedup state (optional)
-# ─────────────────────────────────────────────────────────────
-
-def _gist_ids() -> tuple[str, str]:
-    # GitHub Actions forbids secrets named GITHUB_*, so prefer GIST_TOKEN there.
-    token   = os.environ.get("GIST_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
-    gist_id = os.environ.get("MONITOR_STATE_GIST", "") or os.environ.get("GIST_HISTORY_ID", "")
-    return token, gist_id
-
-
-def _load_state() -> dict:
-    token, gist_id = _gist_ids()
-    if not (token and gist_id):
-        return {}
+def _f(name: str, default: float) -> float:
     try:
-        r = requests.get(f"https://api.github.com/gists/{gist_id}",
-                         headers={"Authorization": f"token {token}"}, timeout=10)
-        if r.status_code != 200:
-            return {}
-        files = r.json().get("files", {})
-        if _STATE_FILE in files:
-            return json.loads(files[_STATE_FILE].get("content") or "{}")
-    except Exception as exc:
-        log.warning("state load failed: %s", exc)
-    return {}
+        return float(os.environ.get(name, default))
+    except Exception:
+        return float(default)
 
-
-def _save_state(state: dict) -> None:
-    token, gist_id = _gist_ids()
-    if not (token and gist_id):
-        return
-    try:
-        requests.patch(f"https://api.github.com/gists/{gist_id}",
-                       headers={"Authorization": f"token {token}"},
-                       json={"files": {_STATE_FILE: {"content": json.dumps(state)}}},
-                       timeout=10)
-    except Exception as exc:
-        log.warning("state save failed: %s", exc)
-
-
-# ─────────────────────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────────────────────
 
 def main() -> int:
-    # Holiday- and session-aware market check (e.g. Moharram: morning closed,
-    # evening open). Without this the monitor would act on stale data during a
-    # closed session and could fire a spurious alert.
+    # 1. Market open? (holiday- and session-aware; e.g. Moharram morning closed)
     from mcx_calendar import is_market_open, session_label, ist_now
     ist = ist_now()
     if not is_market_open(ist):
         log.info("MCX closed (%s, %s IST) — nothing to do",
                  session_label(ist), ist.strftime("%a %H:%M"))
         return 0
+    today = ist.strftime("%Y-%m-%d")
 
-    # 1. Fyers auto-login (TOTP) — credentials from env
+    # 2. Fyers auto-login (TOTP) — credentials from env
     from fyers_fetcher import auto_login, is_auto_login_configured
     if not is_auto_login_configured():
-        log.error("Fyers auto-login not configured — set FYERS_* env/secrets")
+        log.error("Fyers auto-login not configured — set FYERS_* secrets")
         return 1
     token, err = auto_login()
     if not token:
@@ -103,14 +59,7 @@ def main() -> int:
         return 1
     log.info("Fyers connected")
 
-    # 2. SILVERMIC signal — use the SAME tuned thresholds as the app (SM_* env)
-    #    so the cron and the SILVERMIC tab generate identical signals.
-    def _f(name: str, default: float) -> float:
-        try:
-            return float(os.environ.get(name, default))
-        except Exception:
-            return float(default)
-
+    # 3. SILVERMIC signal — same tuned thresholds as the app
     from silvermic_strategy import analyze
     try:
         res = analyze(
@@ -122,65 +71,68 @@ def main() -> int:
     except Exception as exc:
         log.error("SILVERMIC analyze failed: %s", exc)
         return 1
-    sig = res.signal
-    log.info("SILVERMIC signal = %s", sig)
 
-    today = ist.strftime("%Y-%m-%d")
-    state = _load_state()
-    last_alerted = state.get("last_alerted", "WAIT") if state.get("date") == today else "WAIT"
+    sig  = res.signal
+    news = res.news_verdict or {}
+    news_decision = news.get("decision")
+    log.info("signal=%s  news=%s (%s)", sig, news_decision, news.get("label"))
 
-    # 3. Not LONG → reset dedup so the next LONG alerts, then exit
-    if sig != "LONG":
-        _save_state({"last_alerted": "WAIT", "date": today})
+    import monitor_state
+
+    # ── GATE 1 + 2: technical LONG AND news CONFIRMED ──
+    if sig != "LONG" or news_decision != "CONFIRMED":
+        log.info("Not a perfect setup (need LONG + news CONFIRMED) — no alert")
+        monitor_state.reset(today)        # clear marker so the next real setup alerts
         return 0
 
-    # Already alerted this LONG episode → don't repeat
-    if last_alerted == "LONG":
-        log.info("Already alerted this LONG episode — skipping")
+    if monitor_state.already_alerted(today, "PERFECT"):
+        log.info("PERFECT entry already alerted today — skipping")
         return 0
 
-    # 4. DeepSeek gate (skip the alert if the AI says it's not tradeable)
+    # ── GATE 3: DeepSeek pro + thinking final confirmation ──
+    facts = {"signal": sig, "htf": res.htf, "entry": res.entry, "news_verdict": news}
+    deep_note = "Technical + News confirmed (AI gate unavailable)"
     try:
         import deepseek_analyzer as dsa
         if dsa.is_configured():
-            verdict = dsa.screen_silvermic({
-                "signal": res.signal, "htf": res.htf,
-                "entry": res.entry, "news_verdict": res.news_verdict,
-            })
-            if verdict.ok and verdict.verdict == "AVOID":
-                log.info("DeepSeek AVOID — suppressing alert: %s", verdict.reasons[:2])
-                return 0   # leave state un-set so it re-evaluates next run
-            log.info("DeepSeek verdict = %s (%s%%)", verdict.verdict, verdict.confidence)
+            verdict = dsa.confirm_silvermic_entry(facts)   # pro + thinking
+            log.info("DeepSeek(pro) verdict=%s conf=%s%% reasons=%s",
+                     verdict.verdict, verdict.confidence, verdict.reasons[:2])
+            if not dsa.is_perfect_entry(verdict):
+                log.info("DeepSeek did not CONFIRM a perfect entry — no alert")
+                return 0   # leave marker unset so it re-checks next run
+            deep_note = (f"AI CONFIRM {verdict.confidence}% — "
+                         + (verdict.reasons[0] if verdict.reasons else "clean setup"))
         else:
-            log.info("DeepSeek not configured — alerting on technical LONG only")
+            log.warning("DeepSeek not configured — alerting on tech+news only")
     except Exception as exc:
-        log.warning("DeepSeek screen failed (%s) — alerting on technical LONG", exc)
+        log.warning("DeepSeek gate failed (%s) — alerting on tech+news only", exc)
 
-    # 5. Slack alert
-    bot   = os.environ.get("SLACK_BOT_TOKEN", "")
-    chan  = os.environ.get("SLACK_CHANNEL", "#general")
+    # ── Slack "PERFECT ENTRY" ──
+    bot  = os.environ.get("SLACK_BOT_TOKEN", "")
+    chan = os.environ.get("SLACK_CHANNEL", "#general")
     if not bot:
         log.error("SLACK_BOT_TOKEN missing — cannot alert")
         return 1
     from notifier import send_slack_alert
-    ent  = res.entry or {}
-    ep   = ent.get("entry_price", 0)
-    nv   = res.news_verdict or {}
-    ins  = nv.get("top_insights", [])
+    ent = res.entry or {}
+    ep  = ent.get("entry_price", 0)
+    ins = news.get("top_insights", [])
     ok = send_slack_alert(bot, chan, {
+        "header":        "🎯 PERFECT ENTRY — SILVERMIC LONG",
         "entry":         ep,
         "stop_loss":     ent.get("stop_loss", 0),
         "t1":            round(ep + 1500, 0),
         "t2":            round(ep + 4000, 0),
         "t3":            round(ep + 11000, 0),
-        "news_score":    nv.get("score", "N/A"),
-        "news_label":    nv.get("label", "N/A"),
-        "news_decision": nv.get("decision", "N/A"),
-        "top_insight":   ins[0] if ins else "AI-confirmed SILVERMIC LONG",
+        "news_score":    news.get("score", "N/A"),
+        "news_label":    news.get("label", "N/A"),
+        "news_decision": deep_note,
+        "top_insight":   ins[0] if ins else "Technical + News + AI all CONFIRMED",
     })
     if ok:
-        log.info("Slack alert sent")
-        _save_state({"last_alerted": "LONG", "date": today})
+        log.info("PERFECT ENTRY Slack alert sent")
+        monitor_state.mark_alerted(today, "PERFECT")
     else:
         log.error("Slack send failed")
         return 1

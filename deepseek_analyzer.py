@@ -410,3 +410,58 @@ def analyze_silvermic(sm: dict, use_cache: bool = True) -> AIVerdict:
     if use_cache:
         _cache[ckey] = verdict
     return verdict
+
+
+# ─────────────────────────────────────────────────────────────
+#  FINAL "perfect entry" gate — deep model (pro) + thinking
+#  Only invoked when BOTH the technical signal AND the news verdict are green.
+# ─────────────────────────────────────────────────────────────
+
+_PERFECT_SYSTEM = (
+    "You are the FINAL risk gate before a real-money MCX SILVERMIC (silver, long-only) "
+    "intraday trade. Two gates have ALREADY passed: (1) the technical strategy "
+    "(VWAP + EMA9/21 + SuperTrend MTF + RSI) fired a LONG, and (2) the silver news "
+    "verdict is bullish/CONFIRMED. You are gate 3. The trader will ONLY take setups they "
+    "would rate ~90%+ probability, so be STRICT and conservative — it is far better to "
+    "skip a good trade than to take a marginal one. Use ONLY the data provided; never "
+    "invent numbers. CONFIRM only when EVERYTHING aligns cleanly: 1H trend genuinely "
+    "bullish (not 'barely'), price above VWAP but not stretched far above it (no chase), "
+    "EMA9>EMA21 with a real spread, RSI supportive but not overbought (>70), a clean "
+    "pullback entry, and news bullish without conflicting/high-volatility risk flags. "
+    "If ANY of these is weak, borderline, or contradictory, answer CAUTION or AVOID. "
+    "Respond EXACTLY:\n"
+    "VERDICT: CONFIRM|CAUTION|AVOID\n"
+    "AI_CONFIDENCE: <integer 0-100>\n"
+    "- <reason citing a specific data point>\n"
+    "- <reason>\n"
+    "- <reason>\n"
+)
+
+
+def confirm_silvermic_entry(facts: dict, use_cache: bool = True) -> AIVerdict:
+    """
+    Deep final-gate analysis (pro model + thinking) for a SILVERMIC entry whose
+    technical AND news gates are already green. Returns CONFIRM only for a clean,
+    high-probability setup. Uses the configured (pro) model with reasoning on.
+    """
+    if not is_configured():
+        return AIVerdict("ERROR", 0, [], "DeepSeek not configured.", ok=False)
+    blob = json.dumps(facts, default=str, sort_keys=True)
+    ckey = "perfect:" + str(hash(blob))
+    if use_cache and ckey in _cache:
+        return _cache[ckey]
+    ok, text = _call(_PERFECT_SYSTEM,
+                     "Final-gate this SILVERMIC entry (be strict):\n\n" + blob,
+                     max_tokens=600)   # no model override -> pro + thinking
+    if not ok:
+        return AIVerdict("ERROR", 0, [], text, ok=False)
+    verdict = _parse_verdict(text, default_verdict="CAUTION")
+    if use_cache:
+        _cache[ckey] = verdict
+    return verdict
+
+
+def is_perfect_entry(verdict: AIVerdict, min_conf: int = 70) -> bool:
+    """True only when the deep gate CONFIRMs with strong conviction."""
+    return bool(verdict and verdict.ok and verdict.verdict == "CONFIRM"
+                and verdict.confidence >= min_conf)

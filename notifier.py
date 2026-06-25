@@ -41,7 +41,9 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "🟢 SILVERMIC LONG SETUP", "emoji": True},
+            "text": {"type": "plain_text",
+                     "text": payload.get("header", "🟢 SILVERMIC LONG SETUP"),
+                     "emoji": True},
         },
         {
             "type": "section",
