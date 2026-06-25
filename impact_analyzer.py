@@ -47,18 +47,28 @@ def prefetch_prices(symbols: list[str]) -> None:
         _fyers_available = bool(_st.session_state.get("fyers_token", ""))
     except Exception:
         pass
-    if _fyers_available:
-        symbols = [s for s in symbols if s not in _MCX_CONV]
-
     # Only fetch symbols not already in cache
     to_fetch = [s for s in symbols
                 if s not in _price_cache or (now - _price_cache[s][0]) >= _PRICE_CACHE_TTL]
     if not to_fetch:
         return
 
-    # Map NSE symbols → yfinance tickers
-    tickers = [_MCX_PROXY.get(s, f"{s}.NS") for s in to_fetch]
+    # ── Fyers is the DEFAULT source when a token is active ──────────────
+    # Warm the cache per-symbol via the Fyers-first path (live quote + Fyers daily
+    # history for technicals). yfinance stays as the automatic per-symbol fallback
+    # inside _fetch_price_uncached (e.g. once the token expires at midnight IST).
+    if _fyers_available:
+        logger.info("Prefetching %d symbols via Fyers…", len(to_fetch))
+        for s in to_fetch:
+            try:
+                _fetch_price(s)          # populates _price_cache (Fyers → yfinance fallback)
+            except Exception as exc:
+                logger.debug("Fyers prefetch failed for %s: %s", s, exc)
+            time.sleep(0.1)              # gentle on Fyers rate limits
+        return
 
+    # ── No Fyers token → fast yfinance batch (fallback) ────────────────
+    tickers = [_MCX_PROXY.get(s, f"{s}.NS") for s in to_fetch]
     logger.info("Batch-prefetching %d symbols via yf.download()…", len(tickers))
     try:
         raw = yf.download(
@@ -289,6 +299,26 @@ def _fetch_price(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
     return result
 
 
+def _fyers_daily_history(symbol: str, token: str):
+    """
+    60-day daily OHLCV for an NSE equity via the Fyers API. This is the DEFAULT
+    history source for technicals/volume whenever a Fyers token is active.
+    Returns an empty DataFrame on any failure so the caller transparently falls
+    back to yfinance (e.g. after the Fyers token expires at midnight IST).
+    """
+    if not token:
+        return pd.DataFrame()
+    try:
+        from fyers_fetcher import get_history
+        _now   = time.time()
+        d_to   = time.strftime("%Y-%m-%d", time.gmtime(_now))
+        d_from = time.strftime("%Y-%m-%d", time.gmtime(_now - 90 * 86400))  # ~60 trading days
+        return get_history(symbol, token, "D", d_from, d_to, cont_flag=0)
+    except Exception as exc:
+        logger.debug("Fyers daily history failed for %s: %s", symbol, exc)
+        return pd.DataFrame()
+
+
 def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceData]:
     """Internal: actual price fetch without caching."""
     _MCX_SYMBOLS = {"SILVERMIC","GOLDM","CRUDEOIL","NATURALGAS","COPPER","ZINC","ALUMINIUM","NICKEL","LEAD"}
@@ -310,8 +340,16 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
             tech = None
             is_mcx_sym = symbol in _MCX_SYMBOLS
             try:
-                _proxy = _MCX_PROXY.get(symbol, f"{symbol}.NS")
-                _h = yf.Ticker(_proxy).history(period="60d", interval="1d", auto_adjust=True)
+                # Default to Fyers history for NSE equities (live, accurate). Only
+                # MCX-COMEX symbols keep the yfinance COMEX proxy, because their
+                # technicals are intentionally computed on the COMEX price scale.
+                # yfinance remains the automatic fallback for either case.
+                _h = pd.DataFrame()
+                if not is_mcx_comex and symbol not in _MCX_PROXY:
+                    _h = _fyers_daily_history(symbol, _token)
+                if _h is None or _h.empty:
+                    _proxy = _MCX_PROXY.get(symbol, f"{symbol}.NS")
+                    _h = yf.Ticker(_proxy).history(period="60d", interval="1d", auto_adjust=True)
                 if len(_h) >= 20:
                     avg_vol = int(_h["Volume"].iloc[-20:].mean())
                     if is_mcx_comex:
