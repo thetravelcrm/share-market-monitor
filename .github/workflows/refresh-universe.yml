@@ -1,0 +1,47 @@
+name: Refresh NSE Universe
+
+# Monthly: re-pull NSE EQUITY_L.csv, regenerate nse_universe.py, and commit it back
+# if anything changed (new IPOs / delistings). The app redeploys on the push and the
+# monitor crons pick up the new file on their next run — fully hands-off.
+
+on:
+  schedule:
+    - cron: "0 2 1 * *"   # 02:00 UTC on the 1st of every month
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # allows committing the regenerated file back to main
+
+concurrency:
+  group: refresh-universe
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Regenerate nse_universe.py
+        continue-on-error: true     # NSE may block the IP; keep the existing file then
+        run: python refresh_nse_universe.py
+
+      - name: Commit if changed
+        if: always()
+        run: |
+          if git diff --quiet -- nse_universe.py; then
+            echo "No change in NSE universe this month."
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add nse_universe.py
+            git commit -m "chore: monthly NSE universe refresh (new IPOs/delistings) [skip ci]"
+            git push
+            echo "NSE universe updated and pushed."
+          fi
