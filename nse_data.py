@@ -37,14 +37,42 @@ def _get_session() -> requests.Session:
     return s
 
 
+# Free public proxies — tried only when the direct call fails (e.g. NSE blocks the
+# datacenter IP in GitHub Actions). They fetch server-side from a different IP. This
+# is BEST-EFFORT: NSE's API is cookie-gated, so a proxy may still be rejected. All
+# failures fall through to None, so callers degrade gracefully.
+def _proxy_urls(url: str) -> list[str]:
+    import urllib.parse
+    enc = urllib.parse.quote(url, safe="")
+    return [
+        f"https://api.allorigins.win/raw?url={enc}",
+        f"https://corsproxy.io/?url={enc}",
+        f"https://thingproxy.freeboard.io/fetch/{url}",
+    ]
+
+
 def _nse_get(path: str, timeout: int = 10) -> Optional[dict | list]:
+    url = f"https://www.nseindia.com/api/{path}"
+    # 1. Direct, with a cookie-warmed session (works in the app most of the time)
     try:
         s    = _get_session()
-        resp = s.get(f"https://www.nseindia.com/api/{path}", timeout=timeout)
+        resp = s.get(url, timeout=timeout)
         if resp.status_code == 200:
             return resp.json()
     except Exception:
         pass
+    # 2. Free-proxy fallback (best-effort, for IP-blocked environments like the cron)
+    import json as _json
+    for purl in _proxy_urls(url):
+        try:
+            r = requests.get(purl, timeout=timeout + 8,
+                             headers={"User-Agent": _HEADERS["User-Agent"]})
+            if r.status_code == 200:
+                txt = r.text.strip()
+                if txt[:1] in ("{", "["):
+                    return _json.loads(txt)
+        except Exception:
+            continue
     return None
 
 
@@ -185,6 +213,49 @@ def fetch_corporate_events(days_ahead: int = 7) -> list[dict]:
 def get_events_for_symbol(symbol: str, events: list[dict]) -> list[dict]:
     """Filter corporate events list to a specific symbol."""
     return [e for e in events if e.get("symbol", "").upper() == symbol.upper()]
+
+
+# ─────────────────────────────────────────────────────────────
+#  Smart-money map (bulk + block deals → per-symbol institutional signal)
+# ─────────────────────────────────────────────────────────────
+def build_smart_money_map(bulk: list[dict], block: list[dict]) -> dict[str, dict]:
+    """
+    Aggregate today's bulk + block deals into a per-symbol smart-money signal.
+    Returns {SYMBOL: {direction, buy_qty, sell_qty, net_qty, value_cr, client, source}}
+    where direction is "BUY" (net institutional buying), "SELL", or "MIXED".
+    """
+    agg: dict[str, dict] = {}
+    for src, deals in (("bulk", bulk or []), ("block", block or [])):
+        for d in deals:
+            sym = (d.get("symbol") or "").upper().strip()
+            if not sym:
+                continue
+            qty   = int(d.get("qty", 0) or 0)
+            price = float(d.get("price", 0) or 0)
+            side  = (d.get("buy_sell") or "").upper()
+            a = agg.setdefault(sym, {"buy_qty": 0, "sell_qty": 0, "value_cr": 0.0,
+                                     "client": "", "sources": set(), "top_qty": 0})
+            if "BUY" in side:
+                a["buy_qty"] += qty
+            elif "SELL" in side:
+                a["sell_qty"] += qty
+            a["value_cr"] += price * qty / 1e7
+            a["sources"].add(src)
+            if qty > a["top_qty"]:
+                a["top_qty"], a["client"] = qty, d.get("client", "")
+    out: dict[str, dict] = {}
+    for sym, a in agg.items():
+        net = a["buy_qty"] - a["sell_qty"]
+        out[sym] = {
+            "direction": "BUY" if net > 0 else ("SELL" if net < 0 else "MIXED"),
+            "buy_qty":   a["buy_qty"],
+            "sell_qty":  a["sell_qty"],
+            "net_qty":   net,
+            "value_cr":  round(a["value_cr"], 2),
+            "client":    a["client"],
+            "source":    "+".join(sorted(a["sources"])),
+        }
+    return out
 
 
 # ─────────────────────────────────────────────────────────────

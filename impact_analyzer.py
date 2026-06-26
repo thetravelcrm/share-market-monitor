@@ -284,6 +284,7 @@ class ImpactResult:
     notes: str = ""
     news_type: str = "Ongoing"          # "Breaking" | "Ongoing" | "Rumor"
     match_reason: str = ""              # e.g. 'keyword: "mcx"' or 'sector peer: AMC/Wealth'
+    smart_money: Optional[dict] = None  # bulk/block deal confluence (set by pipeline)
 
 
 def _validate_price_data(current: float, prev: float, day_vol: int, symbol: str,

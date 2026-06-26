@@ -212,6 +212,13 @@ def _signal_facts(sig, imp) -> str:
         f"MOVE: expected {imp.expected_move_pct:+.1f}% vs actual {imp.actual_move_pct:+.1f}% today "
         f"| volume {imp.volume_ratio:.1f}x average | reaction: {imp.reaction_status}",
     ]
+    _sm = getattr(imp, "smart_money", None)
+    if _sm and _sm.get("direction") in ("BUY", "SELL"):
+        lines.append(
+            f"SMART MONEY: institutional {_sm['direction']} via {_sm.get('source','bulk/block')} deals today "
+            f"({_sm.get('net_qty', 0):,} net shares, ~Rs {_sm.get('value_cr', 0)}cr"
+            + (f", {_sm['client']}" if _sm.get('client') else "") + ")"
+        )
     if pd_:
         lines.append(
             f"PRICE: {cur}{pd_.current_price} | day change {pd_.day_change_pct:+.2f}% "

@@ -363,6 +363,17 @@ def _confidence_score(
         if _regime == "HighVol":
             score -= 10
 
+    # ── Smart-money (bulk/block deal) confluence ──
+    # Institutional buying that aligns with a BUY (or selling with a SHORT) is a
+    # strong confirmation; an opposing institutional deal is a warning.
+    _sm = getattr(result, "smart_money", None)
+    if _sm and _sm.get("direction") in ("BUY", "SELL"):
+        _smd = _sm["direction"]
+        if (direction == "BUY" and _smd == "BUY") or (direction == "SHORT" and _smd == "SELL"):
+            score += 10
+        elif (direction == "BUY" and _smd == "SELL") or (direction == "SHORT" and _smd == "BUY"):
+            score -= 8
+
     return max(0, min(score, 100))
 
 

@@ -811,8 +811,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.47"
-_APP_BUILD   = "26 Jun 2026 15:16"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.48"
+_APP_BUILD   = "26 Jun 2026 16:44"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1671,6 +1671,20 @@ with tab_signals:
                             f'{_pe_label}</span> '
                         )
 
+                # ── Smart-money (bulk/block deal) badge ──────────
+                _sm_html = ""
+                _sm = getattr(imp, "smart_money", None)
+                if _sm and _sm.get("direction") in ("BUY", "SELL"):
+                    _aligned = ((sig.action == "BUY" and _sm["direction"] == "BUY") or
+                                (sig.action == "SHORT" and _sm["direction"] == "SELL"))
+                    _sm_col = "#00ff88" if _aligned else "#ff4455"
+                    _sm_html = (
+                        f'<span style="background:rgba(255,255,255,0.05);border:1px solid {_sm_col};'
+                        f'color:{_sm_col};padding:2px 8px;border-radius:4px;font-size:11px" '
+                        f'title="{_sm.get("client","")} · ~₹{_sm.get("value_cr",0)}cr · {_sm.get("source","")}">'
+                        f'🏦 {_sm["direction"]} ₹{_sm.get("value_cr",0):.0f}cr</span> '
+                    )
+
                 # ── Log to journal button ──────────────────────
                 log_key = f"log_{card_class}_{_card_idx}_{sig.symbol}"
                 st.markdown(
@@ -1689,6 +1703,7 @@ with tab_signals:
                     f'  {badge(sig.edge_type, "badge-teal")}'
                     f'  {badge(imp.sector, "badge-gold")}'
                     f'  {_pe_html}'
+                    f'  {_sm_html}'
                     f'</div>'
                     f'<div style="margin:4px 0 6px">{rsi_html}</div>'
                     f'{event_html}'

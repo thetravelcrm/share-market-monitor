@@ -53,14 +53,17 @@ def run_pipeline(
 
     # ── 0. NSE market data (non-blocking, all silent-fail) ────
     if progress_cb: progress_cb("Fetching NSE market data…", 0.02)
+    _smart_money: dict = {}
     try:
         from nse_data import fetch_fii_dii, fetch_bulk_deals, fetch_block_deals, \
-                             fetch_corporate_events, fetch_gift_nifty
+                             fetch_corporate_events, fetch_gift_nifty, build_smart_money_map
         result.fii_dii          = fetch_fii_dii()
         result.bulk_deals       = fetch_bulk_deals()
         result.block_deals      = fetch_block_deals()
         result.corporate_events = fetch_corporate_events(days_ahead=7)
         result.nifty_data       = fetch_gift_nifty()
+        # Smart-money confluence: per-symbol institutional buy/sell from today's deals
+        _smart_money = build_smart_money_map(result.bulk_deals, result.block_deals)
     except Exception:
         pass
 
@@ -115,6 +118,10 @@ def run_pipeline(
         result.items_analyzed += 1
 
         for imp in impacts:
+            # Attach smart-money confluence (if this symbol had a bulk/block deal today)
+            # BEFORE scoring, so the signal engine + AI gate can weigh it.
+            if _smart_money:
+                imp.smart_money = _smart_money.get(imp.symbol)
             sig = generate_signal(imp)
             if sig:
                 result.all_signals.append((item, imp, sig))
