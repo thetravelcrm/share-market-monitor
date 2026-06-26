@@ -509,6 +509,16 @@ STOCK_UNIVERSE = {
     "NICKEL":     {"name":"Nickel (MCX)",          "sector":"MCX/Metal","keywords":["nickel mcx","nickel futures","mcx nickel"]},
 }
 
+# ── Merge the NSE Nifty 500 universe (auto-generated) ─────────
+# Curated entries above WIN; this only adds Nifty 500 symbols not already present,
+# so hand-tuned names/keywords/sectors are never overwritten.
+try:
+    from nifty500 import NIFTY500
+    for _sym, _meta in NIFTY500.items():
+        STOCK_UNIVERSE.setdefault(_sym, _meta)
+except Exception:
+    pass
+
 # ── Sector → Stocks mapping (auto-built) ──────────────────────
 SECTOR_STOCKS: dict[str, list[str]] = {}
 for _sym, _meta in STOCK_UNIVERSE.items():

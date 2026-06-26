@@ -811,8 +811,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.48"
-_APP_BUILD   = "26 Jun 2026 16:44"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.49"
+_APP_BUILD   = "26 Jun 2026 18:56"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -964,12 +964,14 @@ _check_schedule()
 
 result: PipelineResult | None = st.session_state.get("result")
 if result is None:
-    st.markdown("""
+    from config import STOCK_UNIVERSE as _SU
+    _n_nse = sum(1 for _m in _SU.values() if not str(_m.get("sector", "")).startswith("MCX"))
+    st.markdown(f"""
     <div style="text-align:center;padding:60px 20px">
       <div style="font-size:52px;margin-bottom:16px">📡</div>
       <h2 style="color:#00d4ff;margin-bottom:10px">Global News Monitor Ready</h2>
       <p style="color:#a8b0d0;font-size:15px;margin-bottom:24px">
-        Monitors 331 NSE stocks · GoldBees · SilverBees · SilverMIC MCX<br>
+        Monitors {_n_nse} NSE stocks · GoldBees · SilverBees · SilverMIC MCX<br>
         Sources: Economic Times · Moneycontrol · Reuters · CNBC + more
       </p>
       <p style="color:#ffd700;font-weight:600;font-size:14px">
