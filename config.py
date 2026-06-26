@@ -59,6 +59,14 @@ NEWS_FEEDS = {
     "Reuters US Economy":        "https://feeds.reuters.com/reuters/USdollarRSS",
     "Investing.com Economy":     "https://in.investing.com/rss/news_14.rss",   # Fed / inflation / GDP
     "Investing.com Forex":       "https://in.investing.com/rss/news_1.rss",    # USD / DXY moves
+    # ── Additional authentic Indian finance desks (high credibility) ─────
+    "Moneycontrol Latest":       "https://www.moneycontrol.com/rss/latestnews.xml",
+    "Moneycontrol Economy":      "https://www.moneycontrol.com/rss/economy.xml",
+    "Mint Economy":              "https://www.livemint.com/rss/economy",
+    "Financial Express Economy": "https://www.financialexpress.com/economy/feed/",
+    "Hindu BusinessLine Markets":"https://www.thehindubusinessline.com/markets/?service=rss",
+    "Hindu BusinessLine Economy":"https://www.thehindubusinessline.com/economy/?service=rss",
+    "ET Markets IPOs":           "https://economictimes.indiatimes.com/markets/ipos/rssfeeds/14655708.cms",
 }
 
 # ── Impact Thresholds ─────────────────────────────────────────

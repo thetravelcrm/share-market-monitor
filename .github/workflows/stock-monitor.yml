@@ -1,0 +1,46 @@
+name: Stock Perfect-Entry Monitor
+
+# Runs the full news pipeline + 3-gate perfect-entry check + Slack, with no browser.
+# Cron is in UTC. NSE trades 09:15-15:30 IST == 03:45-10:00 UTC, Mon-Fri.
+# The script also checks NSE hours/holidays precisely, so a slightly wider window is fine.
+# Every 30 min keeps DeepSeek (pro) cost reasonable; lower the interval if you want.
+
+on:
+  schedule:
+    - cron: "*/30 4-10 * * 1-5"   # every 30 min, 04:00-10:29 UTC, weekdays
+  workflow_dispatch: {}            # allow manual "Run workflow" for testing
+
+concurrency:
+  group: stock-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18            # pipeline + up to a few pro+thinking calls
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run stock perfect-entry monitor
+        env:
+          # ── DeepSeek (required for the bulletproof gate) ──
+          DEEPSEEK_API_KEY:      ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL:        ${{ secrets.DEEPSEEK_MODEL }}
+          DEEPSEEK_THINKING:     ${{ secrets.DEEPSEEK_THINKING }}
+          # ── Slack (required for alerts) ──
+          SLACK_BOT_TOKEN:       ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL:         ${{ secrets.SLACK_CHANNEL }}
+          # ── Dedup state (shared with the app, separate file from SILVERMIC) ──
+          GIST_TOKEN:            ${{ secrets.GIST_TOKEN }}
+          MONITOR_STATE_GIST:    ${{ secrets.MONITOR_STATE_GIST }}
+          # ── Tuning (optional) ──
+          STOCK_NEWS_HOURS:      ${{ secrets.STOCK_NEWS_HOURS }}
+          STOCK_TOP_N:           ${{ secrets.STOCK_TOP_N }}
+          PERFECT_MIN_CONF:      ${{ secrets.PERFECT_MIN_CONF }}
+          PERFECT_MAX_CHECK:     ${{ secrets.PERFECT_MAX_CHECK }}
+        run: python stock_monitor.py

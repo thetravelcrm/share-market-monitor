@@ -75,3 +75,30 @@ def session_label(ist: datetime | None = None) -> str:
     if (morning_open, evening_open) != (True, True):
         return "MCX partial holiday (one session closed)"
     return "normal session"
+
+
+# ─────────────────────────────────────────────────────────────
+#  NSE equity calendar (09:15–15:30 IST, Mon–Fri)
+# ─────────────────────────────────────────────────────────────
+_NSE_OPEN  = 9 * 60 + 15     # 09:15
+_NSE_CLOSE = 15 * 60 + 30    # 15:30
+
+# NSE 2026 trading holidays (full close). Extend with the official NSE list;
+# the dates below are the ones shared by both NSE and MCX full-close circulars.
+_NSE_HOLIDAYS = {
+    "2026-01-26",  # Republic Day
+    "2026-04-03",  # Good Friday
+    "2026-10-02",  # Gandhi Jayanti
+    "2026-12-25",  # Christmas
+}
+
+
+def is_nse_open(ist: datetime | None = None) -> bool:
+    """True if NSE cash equities are open right now (weekend + known-holiday aware)."""
+    ist = ist or ist_now()
+    if ist.weekday() >= 5:
+        return False
+    if ist.strftime("%Y-%m-%d") in _NSE_HOLIDAYS:
+        return False
+    mins = ist.hour * 60 + ist.minute
+    return _NSE_OPEN <= mins <= _NSE_CLOSE

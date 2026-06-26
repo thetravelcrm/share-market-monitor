@@ -22,7 +22,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_STATE_FILE = "silvermic_monitor_state.json"
+_STATE_FILE = "silvermic_monitor_state.json"   # SILVERMIC dedup (single marker/day)
+_STOCK_FILE = "stock_monitor_state.json"       # stock dedup (set of symbols/day)
 
 
 def _val(name: str) -> str:
@@ -43,7 +44,7 @@ def _creds() -> tuple[str, str]:
     return token, gist
 
 
-def load() -> dict:
+def load(fname: str = _STATE_FILE) -> dict:
     token, gist = _creds()
     if not (token and gist):
         return {}
@@ -53,21 +54,21 @@ def load() -> dict:
         if r.status_code != 200:
             return {}
         files = r.json().get("files", {})
-        if _STATE_FILE in files:
-            return json.loads(files[_STATE_FILE].get("content") or "{}")
+        if fname in files:
+            return json.loads(files[fname].get("content") or "{}")
     except Exception as exc:
         logger.warning("monitor_state load failed: %s", exc)
     return {}
 
 
-def save(state: dict) -> bool:
+def save(state: dict, fname: str = _STATE_FILE) -> bool:
     token, gist = _creds()
     if not (token and gist):
         return False
     try:
         r = requests.patch(f"https://api.github.com/gists/{gist}",
                            headers={"Authorization": f"token {token}"},
-                           json={"files": {_STATE_FILE: {"content": json.dumps(state)}}},
+                           json={"files": {fname: {"content": json.dumps(state)}}},
                            timeout=10)
         return r.status_code == 200
     except Exception as exc:
@@ -88,3 +89,17 @@ def mark_alerted(today: str, marker: str = "PERFECT") -> None:
 def reset(today: str) -> None:
     """Clear today's alert marker (call when the setup is no longer valid)."""
     save({"last_alerted": "WAIT", "date": today})
+
+
+# ── Stock perfect-entry dedup (a set of symbols already alerted today) ──
+
+def stock_already_alerted(symbol: str, today: str) -> bool:
+    s = load(_STOCK_FILE)
+    return s.get("date") == today and symbol in (s.get("stocks") or [])
+
+
+def mark_stock_alerted(symbol: str, today: str) -> None:
+    s = load(_STOCK_FILE)
+    syms = set(s.get("stocks") or []) if s.get("date") == today else set()
+    syms.add(symbol)
+    save({"date": today, "stocks": sorted(syms)}, _STOCK_FILE)
