@@ -53,7 +53,24 @@ def main() -> int:
         log.warning("DeepSeek not configured — perfect-entry gate unavailable; exiting")
         return 0
 
-    # 3. Run the full news → signal pipeline (yfinance prices in headless mode)
+    # 3. Connect Fyers (TOTP) for LIVE prices — same source as the app. Falls back
+    #    to yfinance automatically if login isn't configured or fails.
+    try:
+        from fyers_fetcher import auto_login, is_auto_login_configured
+        if is_auto_login_configured():
+            _tok, _err = auto_login()
+            if _tok:
+                import impact_analyzer
+                impact_analyzer.set_access_token(_tok)
+                log.info("Fyers connected — using live prices")
+            else:
+                log.warning("Fyers login failed (%s) — using yfinance fallback", _err)
+        else:
+            log.info("Fyers not configured — using yfinance prices")
+    except Exception as exc:
+        log.warning("Fyers connect error (%s) — using yfinance fallback", exc)
+
+    # 4. Run the full news → signal pipeline
     from pipeline import run_pipeline
     try:
         res = run_pipeline(hours=_i("STOCK_NEWS_HOURS", 12),

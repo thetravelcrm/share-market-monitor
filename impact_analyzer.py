@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -26,6 +27,29 @@ logger = logging.getLogger(__name__)
 _price_cache: dict[str, tuple[float, Optional["PriceData"]]] = {}  # symbol → (timestamp, data)
 _PRICE_CACHE_TTL = 300  # seconds (5 min)
 
+# Fyers access token for HEADLESS use (cron). In the Streamlit app the token lives
+# in st.session_state; in the GitHub Actions cron there is no session, so the
+# monitor injects the token here via set_access_token() after TOTP auto-login.
+_HEADLESS_TOKEN = ""
+
+
+def set_access_token(token: str) -> None:
+    """Inject a Fyers access token for non-Streamlit (headless/cron) price fetches."""
+    global _HEADLESS_TOKEN
+    _HEADLESS_TOKEN = token or ""
+
+
+def _get_fyers_token() -> str:
+    """Resolve the Fyers token: Streamlit session first, then injected/env (headless)."""
+    try:
+        import streamlit as _st
+        t = _st.session_state.get("fyers_token", "")
+        if t:
+            return str(t)
+    except Exception:
+        pass
+    return _HEADLESS_TOKEN or os.environ.get("FYERS_ACCESS_TOKEN", "")
+
 
 def prefetch_prices(symbols: list[str]) -> None:
     """
@@ -41,12 +65,7 @@ def prefetch_prices(symbols: list[str]) -> None:
     now = time.time()
 
     # Skip MCX COMEX symbols when Fyers is connected — live INR prices come from Fyers
-    _fyers_available = False
-    try:
-        import streamlit as _st
-        _fyers_available = bool(_st.session_state.get("fyers_token", ""))
-    except Exception:
-        pass
+    _fyers_available = bool(_get_fyers_token())
     # Only fetch symbols not already in cache
     to_fetch = [s for s in symbols
                 if s not in _price_cache or (now - _price_cache[s][0]) >= _PRICE_CACHE_TTL]
@@ -329,8 +348,7 @@ def _fetch_price_uncached(symbol: str, exchange: str = "NSE") -> Optional[PriceD
     # lag the live MCX price by several hours on volatile days.
     is_mcx_comex = symbol in _MCX_CONV
     try:
-        import streamlit as _st
-        _token = _st.session_state.get("fyers_token", "")
+        _token = _get_fyers_token()
         from fyers_fetcher import get_quote
         fq = get_quote(symbol, _token) if _token else None
         if fq and fq["last_price"] > 0:
