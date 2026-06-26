@@ -519,6 +519,18 @@ try:
 except Exception:
     pass
 
+# ── Merge the FULL NSE listed equity universe (~2000 EQ stocks) ─
+# Added LAST and via setdefault, so curated + Nifty500 entries win. This lets a
+# STRONG news on ANY listed stock (not just the top 500) resolve to a symbol and
+# generate a signal. Prices are still fetched ONLY for symbols the news mentions,
+# so the larger list costs nothing unless a stock actually appears in the news.
+try:
+    from nse_universe import NSE_UNIVERSE
+    for _sym, _meta in NSE_UNIVERSE.items():
+        STOCK_UNIVERSE.setdefault(_sym, _meta)
+except Exception:
+    pass
+
 # ── Sector → Stocks mapping (auto-built) ──────────────────────
 SECTOR_STOCKS: dict[str, list[str]] = {}
 for _sym, _meta in STOCK_UNIVERSE.items():

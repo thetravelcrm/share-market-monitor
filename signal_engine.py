@@ -42,6 +42,14 @@ def _strict_filter(result: ImpactResult) -> Optional[str]:
     if not tech:
         return "No technical data available"
 
+    # Liquidity floor — the full NSE universe (~2000 stocks) includes thinly-traded
+    # microcaps. Block a signal when daily volume AND turnover are both tiny (only
+    # when we actually have volume data, so MCX/commodity rows are unaffected).
+    _avgv = getattr(pd, "avg_volume_20d", 0) or 0
+    _turnover = _avgv * (getattr(pd, "current_price", 0) or 0)
+    if 0 < _avgv < 20000 and _turnover < 2_500_000:
+        return "Illiquid — avg daily volume/turnover too low to trade cleanly"
+
     # Macro/broad-sector matches are too indirect to trade directionally.
     # Only Direct (stock named in news) or Sectoral (same industry) qualify.
     if result.relation == "Macro":
