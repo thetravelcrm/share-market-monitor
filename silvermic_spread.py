@@ -54,32 +54,51 @@ def _candidate_contracts(today: date) -> list[dict]:
                 "price":     0.0,
             })
     out.sort(key=lambda c: c["expiry"])
+    return out[:6]    # only the nearest contracts are listed; bounds the quote calls
+
+
+def _parse_quote_resp(resp) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    if not resp or resp.get("code") != 200:
+        return out
+    for item in resp.get("d", []) or []:
+        sym = item.get("n", "")
+        v = item.get("v", {}) or {}
+        lp = v.get("lp", 0)
+        if sym and lp:
+            out[sym] = {
+                "last_price": float(lp),
+                "prev_close": float(v.get("prev_close_price", lp) or lp),
+                "high":       float(v.get("high_price", lp) or lp),
+                "low":        float(v.get("low_price", lp) or lp),
+                "volume":     int(v.get("volume", 0) or 0),
+            }
     return out
 
 
 def quote_many(quote_syms: list[str], token: str) -> dict[str, dict]:
-    """Quote several Fyers symbols in ONE call. Returns {symbol: {last_price,…}}."""
+    """
+    Quote several Fyers symbols. Tries one batched call; if Fyers rejects the whole
+    batch (it does when ANY symbol is an unlisted/expired contract), falls back to
+    per-symbol quotes and skips the ones that fail. Returns {symbol: {last_price,…}}.
+    """
     out: dict[str, dict] = {}
     if not quote_syms:
         return out
     try:
         from fyers_fetcher import get_fyers_model
         fyers = get_fyers_model(token)
-        resp = fyers.quotes({"symbols": ",".join(quote_syms)})
-        if resp.get("code") != 200:
+        try:
+            out = _parse_quote_resp(fyers.quotes({"symbols": ",".join(quote_syms)}))
+        except Exception:
+            out = {}
+        if out:
             return out
-        for item in resp.get("d", []) or []:
-            sym = item.get("n", "")
-            v = item.get("v", {}) or {}
-            lp = v.get("lp", 0)
-            if sym and lp:
-                out[sym] = {
-                    "last_price": float(lp),
-                    "prev_close": float(v.get("prev_close_price", lp) or lp),
-                    "high":       float(v.get("high_price", lp) or lp),
-                    "low":        float(v.get("low_price", lp) or lp),
-                    "volume":     int(v.get("volume", 0) or 0),
-                }
+        for s in quote_syms:                     # batch failed → quote each, skip invalid
+            try:
+                out.update(_parse_quote_resp(fyers.quotes({"symbols": s})))
+            except Exception:
+                continue
     except Exception:
         pass
     return out
@@ -166,15 +185,47 @@ def _fold(rec: dict, value: float, ts: str) -> None:
 
 def update_and_get_minmax(spreads: list[dict]) -> dict:
     """Fold the current LIVE spread into the persisted all-time min/max. Cheap (no I/O
-    to Fyers). Returns {key: {min:{value,ts}, max:{value,ts}}}."""
+    to Fyers). Returns {key: {label, min:{value,ts}, max:{value,ts}}}."""
     state = _load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
     for sp in spreads:
         rec = state.get(sp["key"]) or {}
+        rec["label"] = sp["label"]
         _fold(rec, sp["spread"], now_iso)
         state[sp["key"]] = rec
     _save_state(state)
     return {sp["key"]: state[sp["key"]] for sp in spreads}
+
+
+def persisted_minmax() -> dict:
+    """Read the stored all-time min/max (for display when the market is closed)."""
+    return _load_state()
+
+
+def cron_sample(token: str, hist_days: int = 2) -> int:
+    """
+    Headless sampler for the 24/7 cron: folds the live spread AND recent intraday
+    history into the persisted all-time min/max (so extremes between cron runs are
+    captured from the history bars). Returns the number of pairs updated.
+    """
+    contracts = tradeable_contracts(token)
+    spreads = pairwise_spreads(contracts)
+    if not spreads:
+        return 0
+    state = _load_state()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for sp in spreads:
+        rec = state.get(sp["key"]) or {}
+        rec["label"] = sp["label"]
+        _fold(rec, sp["spread"], now_iso)
+        ext = _history_spread_extremes(token, sp["near_hist"], sp["far_hist"], hist_days)
+        if ext:
+            mn, mn_ts, mx, mx_ts = ext
+            _fold(rec, mn, mn_ts)
+            _fold(rec, mx, mx_ts)
+        state[sp["key"]] = rec
+    _save_state(state)
+    return len(spreads)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -214,6 +265,7 @@ def backfill(token: str, days: int = 30) -> dict:
             continue
         mn, mn_ts, mx, mx_ts = ext
         rec = state.get(sp["key"]) or {}
+        rec["label"] = sp["label"]
         _fold(rec, mn, mn_ts)
         _fold(rec, mx, mx_ts)
         state[sp["key"]] = rec

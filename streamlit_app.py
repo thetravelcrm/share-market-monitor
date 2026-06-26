@@ -811,8 +811,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.52"
-_APP_BUILD   = "26 Jun 2026 23:11"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.53"
+_APP_BUILD   = "26 Jun 2026 23:32"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3403,68 +3403,100 @@ with tab_silvermic:
 # ═══════════════════════════════════════════════════════════════
 #  TAB 12  —  📐 SILVERMIC Calendar Spreads
 # ═══════════════════════════════════════════════════════════════
-@st.cache_data(ttl=120, show_spinner=False)
-def _spread_board(_tok: str):
+def _render_spreads(token: str):
+    """Body of the Spreads tab. Wrapped in a fragment so Refresh / auto-update
+    re-run ONLY this tab (not the whole page)."""
     import silvermic_spread as _sps
-    return _sps.get_spread_board(_tok)
+    from mcx_calendar import is_market_open as _mkt_open
+
+    _c1, _c2, _c3 = st.columns([1, 1, 3])
+    _c1.button("🔄 Refresh", key="sp_refresh")   # a click reruns just this fragment
+    if _c2.button("📥 Backfill 30d", key="sp_backfill",
+                  help="Fold 30 days of intraday history into the all-time min/max"):
+        with st.spinner("Folding 30 days of history into min/max…"):
+            try:
+                _sps.backfill(token, days=30)
+                st.success("Backfilled min/max from history.")
+            except Exception as _be:
+                st.warning(f"Backfill failed: {_be}")
+    _now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+    _c3.caption(f"Updated {_now_ist.strftime('%H:%M:%S')} IST · auto every 60s (this tab only)")
+
+    _market_open = _mkt_open()
+    _contracts, _spreads, _minmax = [], [], {}
+    if _market_open:
+        try:
+            _contracts, _spreads, _minmax = _sps.get_spread_board(token)
+        except Exception as _spe:
+            st.error(f"Spread fetch failed: {_spe}")
+    else:
+        st.info("MCX closed — showing the last stored all-time min/max. "
+                "Live spreads resume during market hours (9:00–23:30 IST).")
+
+    if _contracts:
+        st.markdown("**Tradeable contracts (live):**")
+        _ccols = st.columns(len(_contracts))
+        for _cc, _ct in zip(_ccols, _contracts):
+            _cc.metric(f"{_ct['label']} · {_ct['dte']}d", f"₹{_ct['price']:,.0f}")
+        _rows = []
+        for _sp in _spreads:
+            _rec = _minmax.get(_sp["key"], {})
+            _mn, _mx = _rec.get("min", {}), _rec.get("max", {})
+            _rows.append({
+                "Pair":               _sp["label"],
+                "Current Spread (₹)": _sp["spread"],
+                "Min (₹)":            _mn.get("value", "—"),
+                "Min @ (IST)":        _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
+                "Max (₹)":            _mx.get("value", "—"),
+                "Max @ (IST)":        _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
+            })
+        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+    else:
+        # Market closed, or Fyers returned nothing → show persisted all-time min/max.
+        _rows = []
+        for _key, _rec in (_sps.persisted_minmax() or {}).items():
+            _mn, _mx = _rec.get("min", {}), _rec.get("max", {})
+            if not (_mn or _mx):
+                continue
+            _rows.append({
+                "Pair":        _rec.get("label", _key),
+                "Min (₹)":     _mn.get("value", "—"),
+                "Min @ (IST)": _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
+                "Max (₹)":     _mx.get("value", "—"),
+                "Max @ (IST)": _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
+            })
+        if _rows:
+            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        elif _market_open:
+            st.warning("No tradeable SILVERMIC contracts returned by Fyers — the token may "
+                       "be disconnected. Try the sidebar Connect, then Refresh.")
+        else:
+            st.caption("No stored spread history yet — it fills in once the market opens "
+                       "(or run the 24/7 cron).")
+
+    st.caption("Spread = far-month − near-month price (₹/kg). All-time min/max persists in "
+               "your gist; the background cron keeps it gap-free 24/7.")
+
+
+# Wrap in a Streamlit fragment (>= 1.37 st.fragment, older: experimental_fragment) so the
+# Refresh button and the 60s auto-update only re-run this tab, not the whole page.
+_FRAG = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
+if _FRAG is not None:
+    try:
+        _render_spreads = _FRAG(run_every=60)(_render_spreads)
+    except TypeError:
+        _render_spreads = _FRAG(_render_spreads)
 
 
 with tab_spread:
-    import silvermic_spread as _sps
     st.markdown("### 📐 SILVERMIC Calendar Spreads")
     st.caption("Live spread between Zerodha-tradeable SILVERMIC contracts "
-               "(auto-selected: expiry more than 7 weeks away). "
-               "Min/Max are all-time, persisted, with the time they occurred.")
-
+               "(auto-selected: expiry more than 7 weeks away).")
     _sp_token = st.session_state.get("fyers_token", "")
     if not _sp_token:
         st.info("🔌 Connect Fyers in the sidebar to view live calendar spreads.")
     else:
-        _spc1, _spc2, _spc3 = st.columns([1, 1, 3])
-        with _spc1:
-            if st.button("🔄 Refresh", key="sp_refresh"):
-                st.cache_data.clear()
-        with _spc2:
-            if st.button("📥 Backfill 30d", key="sp_backfill",
-                         help="Fold 30 days of intraday history into the all-time min/max"):
-                with st.spinner("Folding 30 days of history into min/max…"):
-                    try:
-                        _sps.backfill(_sp_token, days=30)
-                        st.cache_data.clear()
-                        st.success("Backfilled min/max from history.")
-                    except Exception as _be:
-                        st.warning(f"Backfill failed: {_be}")
-
-        try:
-            _contracts, _spreads, _minmax = _spread_board(_sp_token)
-        except Exception as _spe:
-            _contracts, _spreads, _minmax = [], [], {}
-            st.error(f"Spread fetch failed: {_spe}")
-
-        if not _contracts:
-            st.warning("No tradeable SILVERMIC contracts found — Fyers may be "
-                       "disconnected, the market closed, or data unavailable.")
-        else:
-            st.markdown("**Tradeable contracts (live):**")
-            _ccols = st.columns(len(_contracts))
-            for _cc, _ct in zip(_ccols, _contracts):
-                _cc.metric(f"{_ct['label']} · {_ct['dte']}d", f"₹{_ct['price']:,.0f}")
-
-            _rows = []
-            for _sp in _spreads:
-                _rec = _minmax.get(_sp["key"], {})
-                _mn, _mx = _rec.get("min", {}), _rec.get("max", {})
-                _rows.append({
-                    "Pair":               _sp["label"],
-                    "Current Spread (₹)": _sp["spread"],
-                    "Min (₹)":            _mn.get("value", "—"),
-                    "Min @ (IST)":        _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
-                    "Max (₹)":            _mx.get("value", "—"),
-                    "Max @ (IST)":        _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
-                })
-            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
-            st.caption("Spread = far-month − near-month price (₹/kg). Min/Max sample while the "
-                       "app is open (~every 2 min) plus any Backfill — no 24/7 cron.")
+        _render_spreads(_sp_token)
 
 
 # ── Footer ────────────────────────────────────────────────────

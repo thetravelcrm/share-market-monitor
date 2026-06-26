@@ -1,0 +1,39 @@
+name: SILVERMIC Spread Monitor
+
+# Samples the SILVERMIC calendar spreads into the shared all-time min/max (gist) so
+# the Spreads tab stays gap-free even when no browser is open. No Slack.
+# Cron is UTC. MCX trades ~09:00-23:30 IST == 03:30-18:00 UTC, Mon-Fri.
+
+on:
+  schedule:
+    - cron: "*/20 3-18 * * 1-5"   # every 20 min, 03:00-18:59 UTC, weekdays
+  workflow_dispatch: {}
+
+concurrency:
+  group: spread-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run spread monitor
+        env:
+          # ── Fyers (required) ──
+          FYERS_CLIENT_ID:    ${{ secrets.FYERS_CLIENT_ID }}
+          FYERS_SECRET_KEY:   ${{ secrets.FYERS_SECRET_KEY }}
+          FYERS_ID:           ${{ secrets.FYERS_ID }}
+          FYERS_TOTP_SECRET:  ${{ secrets.FYERS_TOTP_SECRET }}
+          FYERS_PIN:          ${{ secrets.FYERS_PIN }}
+          # ── Shared spread state (same gist the app uses) ──
+          GIST_TOKEN:         ${{ secrets.GIST_TOKEN }}
+          MONITOR_STATE_GIST: ${{ secrets.MONITOR_STATE_GIST }}
+        run: python spread_monitor.py
