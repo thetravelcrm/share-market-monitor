@@ -811,8 +811,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.51"
-_APP_BUILD   = "26 Jun 2026 20:31"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.52"
+_APP_BUILD   = "26 Jun 2026 23:11"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1140,7 +1140,7 @@ def _fetch_pe(symbol: str) -> tuple[float, float]:
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
 tab_impact, tab_opps, tab_signals, tab_mcx, tab_sectors, tab_news, \
-tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic = st.tabs([
+tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic, tab_spread = st.tabs([
     "🔥 Top Impacted",
     "⚡ Underreacted",
     "🎯 Trade Signals",
@@ -1152,6 +1152,7 @@ tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic = st.tabs([
     "🔬 Backtest",
     "📊 MPHR",
     "🥈 SILVERMIC",
+    "📐 Spreads",
 ])
 
 
@@ -3397,6 +3398,73 @@ with tab_silvermic:
             st.error(str(_sm_err))
         except Exception as _sm_exc:
             st.error(f"Strategy error: {_sm_exc}")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB 12  —  📐 SILVERMIC Calendar Spreads
+# ═══════════════════════════════════════════════════════════════
+@st.cache_data(ttl=120, show_spinner=False)
+def _spread_board(_tok: str):
+    import silvermic_spread as _sps
+    return _sps.get_spread_board(_tok)
+
+
+with tab_spread:
+    import silvermic_spread as _sps
+    st.markdown("### 📐 SILVERMIC Calendar Spreads")
+    st.caption("Live spread between Zerodha-tradeable SILVERMIC contracts "
+               "(auto-selected: expiry more than 7 weeks away). "
+               "Min/Max are all-time, persisted, with the time they occurred.")
+
+    _sp_token = st.session_state.get("fyers_token", "")
+    if not _sp_token:
+        st.info("🔌 Connect Fyers in the sidebar to view live calendar spreads.")
+    else:
+        _spc1, _spc2, _spc3 = st.columns([1, 1, 3])
+        with _spc1:
+            if st.button("🔄 Refresh", key="sp_refresh"):
+                st.cache_data.clear()
+        with _spc2:
+            if st.button("📥 Backfill 30d", key="sp_backfill",
+                         help="Fold 30 days of intraday history into the all-time min/max"):
+                with st.spinner("Folding 30 days of history into min/max…"):
+                    try:
+                        _sps.backfill(_sp_token, days=30)
+                        st.cache_data.clear()
+                        st.success("Backfilled min/max from history.")
+                    except Exception as _be:
+                        st.warning(f"Backfill failed: {_be}")
+
+        try:
+            _contracts, _spreads, _minmax = _spread_board(_sp_token)
+        except Exception as _spe:
+            _contracts, _spreads, _minmax = [], [], {}
+            st.error(f"Spread fetch failed: {_spe}")
+
+        if not _contracts:
+            st.warning("No tradeable SILVERMIC contracts found — Fyers may be "
+                       "disconnected, the market closed, or data unavailable.")
+        else:
+            st.markdown("**Tradeable contracts (live):**")
+            _ccols = st.columns(len(_contracts))
+            for _cc, _ct in zip(_ccols, _contracts):
+                _cc.metric(f"{_ct['label']} · {_ct['dte']}d", f"₹{_ct['price']:,.0f}")
+
+            _rows = []
+            for _sp in _spreads:
+                _rec = _minmax.get(_sp["key"], {})
+                _mn, _mx = _rec.get("min", {}), _rec.get("max", {})
+                _rows.append({
+                    "Pair":               _sp["label"],
+                    "Current Spread (₹)": _sp["spread"],
+                    "Min (₹)":            _mn.get("value", "—"),
+                    "Min @ (IST)":        _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
+                    "Max (₹)":            _mx.get("value", "—"),
+                    "Max @ (IST)":        _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
+                })
+            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+            st.caption("Spread = far-month − near-month price (₹/kg). Min/Max sample while the "
+                       "app is open (~every 2 min) plus any Backfill — no 24/7 cron.")
 
 
 # ── Footer ────────────────────────────────────────────────────

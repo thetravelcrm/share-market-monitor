@@ -5,6 +5,7 @@
 .silvermic_config.json
 silvermic_active_trade.json
 silvermic_trade_history.json
+silvermic_spread_state.json
 signal_history.json
 
 # Python
