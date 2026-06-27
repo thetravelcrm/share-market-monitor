@@ -106,6 +106,56 @@ def is_auto_login_configured() -> bool:
     )
 
 
+def _verify_totp_step(sess, base: str, request_key: str, totp_secret: str):
+    """
+    Step 2 of auto-login: verify the TOTP. Hardened against the common failure modes:
+      - normalises the secret (strips spaces, upper-cases) and validates it is base32;
+      - never generates a code in the last 3s of a 30s window (it would roll mid-request);
+      - retries ONCE on a fresh window if Fyers returns -1063 'invalid totp' (a benign
+        boundary/skew miss), but no more — to avoid burning attempts / blocking the account;
+      - on final failure, returns the code it generated + IST time so the user can compare
+        with their authenticator app (mismatch == wrong secret; match == clock skew).
+    Returns (new_request_key, "") on success, (None, error_message) on failure.
+    """
+    import pyotp
+    import time as _t
+    from datetime import datetime, timezone, timedelta
+
+    secret = (totp_secret or "").strip().replace(" ", "").upper()
+    try:
+        totp = pyotp.TOTP(secret)
+        totp.now()                      # forces a base32 decode — fails fast if malformed
+    except Exception as e:
+        return None, ("FYERS_TOTP_SECRET is not a valid TOTP key (base32 decode failed: "
+                      f"{e}). Re-copy it from Fyers → My Account → Profile → Others → "
+                      "External 2FA TOTP.")
+
+    last: dict = {}
+    for attempt in range(2):
+        pos = _t.time() % 30
+        if pos > 27:                    # too close to the boundary — wait for the next window
+            _t.sleep(30 - pos + 0.5)
+        code = totp.now()
+        try:
+            last = sess.post(f"{base}/verify_otp",
+                             json={"request_key": request_key, "otp": code}, timeout=10).json()
+        except Exception as e:
+            return None, f"network error: {e}"
+        if last.get("s") == "ok":
+            return last["request_key"], ""
+        # Only retry the benign 'invalid totp' (-1063), and only once on a fresh window.
+        if last.get("code") != -1063 or attempt == 1:
+            break
+        _t.sleep(30 - (_t.time() % 30) + 0.5)
+
+    gen = totp.now()
+    ist = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%H:%M:%S")
+    return None, (f"verify_otp failed: {last}. The app's secret generated code {gen} at "
+                  f"{ist} IST — open your Fyers authenticator: if that 6-digit code differs, "
+                  "FYERS_TOTP_SECRET is wrong (re-copy from Fyers → Profile → External 2FA "
+                  "TOTP). If it matches, the server clock is skewed.")
+
+
 def auto_login() -> tuple[Optional[str], str]:
     """
     Fully automated Fyers login via TOTP + PIN (Fyers vagator HTTP API).
@@ -147,17 +197,10 @@ def auto_login() -> tuple[Optional[str], str]:
     except Exception as e:
         return None, f"Step1 network error: {e}"
 
-    # Step 2 — verify TOTP
-    try:
-        totp_code = pyotp.TOTP(totp_secret).now()
-        r2 = sess.post(f"{BASE}/verify_otp",
-                       json={"request_key": request_key, "otp": totp_code}, timeout=10)
-        d2 = r2.json()
-        if d2.get("s") != "ok":
-            return None, f"Step2 verify_otp failed: {d2}"
-        request_key = d2["request_key"]
-    except Exception as e:
-        return None, f"Step2 TOTP error: {e}"
+    # Step 2 — verify TOTP (boundary-safe, one retry, clear diagnostics)
+    request_key, _totp_err = _verify_totp_step(sess, BASE, request_key, totp_secret)
+    if not request_key:
+        return None, f"Step2 {_totp_err}"
 
     # Step 3 — verify PIN
     # Fyers vagator v2 expects plain PIN string (not hashed)
