@@ -803,8 +803,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.60"
-_APP_BUILD   = "29 Jun 2026 16:14"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.61"
+_APP_BUILD   = "29 Jun 2026 18:36"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1371,18 +1371,26 @@ with tab_signals:
         notrades = [(item,imp,sig) for item,imp,sig in _eq_signals
                     if sig.action=="NO TRADE" and sig.action in sig_action]
 
-        # ── DeepSeek auto-filter (fast screen): only AI-approved BUY/SHORT show ──
-        # AVOID-verdict signals move to a collapsed "Filtered by AI" list below.
-        with st.spinner("🤖 DeepSeek screening signals…"):
-            buys,   _buys_rej   = _ai_filter_signals(buys)
-            shorts, _shorts_rej = _ai_filter_signals(shorts)
-        _ai_rejected = _buys_rej + _shorts_rej
-
-        # ── 3-gate PERFECT ENTRIES: deep DeepSeek (pro+thinking) on top candidates ──
-        _perfect = []
-        if buys or shorts:
-            with st.spinner("🤖 DeepSeek (pro) checking top signals for perfect entries…"):
-                _perfect = _ai_perfect_entries(buys + shorts)
+        # ── DeepSeek screening is OPT-IN ──────────────────────────────────────
+        # Running it on every render fires many AI calls (incl. slow pro+thinking)
+        # and blocks the whole page — that stalls the tabs rendered below this one
+        # (SILVERMIC / Spreads). The 24/7 crons already AI-gate every signal and
+        # Slack-alert automatically, so in the app it is on demand: the page stays
+        # fast and you toggle this when you want the AI screen.
+        _run_ai = st.toggle(
+            "🤖 AI-screen signals (DeepSeek)", value=False, key="sig_ai_screen",
+            help="Filter BUY/SHORT with DeepSeek and flag perfect entries. Off by "
+                 "default for a fast page — the background cron runs this automatically.")
+        _ai_rejected: list = []
+        _perfect: list = []
+        if _run_ai:
+            with st.spinner("🤖 DeepSeek screening signals…"):
+                buys,   _buys_rej   = _ai_filter_signals(buys)
+                shorts, _shorts_rej = _ai_filter_signals(shorts)
+            _ai_rejected = _buys_rej + _shorts_rej
+            if buys or shorts:
+                with st.spinner("🤖 DeepSeek (pro) checking top signals for perfect entries…"):
+                    _perfect = _ai_perfect_entries(buys + shorts)
         if _perfect:
             st.markdown("#### 🎯 Perfect Entries — Technical + News + DeepSeek (Pro) all confirmed")
             _alerted = st.session_state.setdefault("stock_perfect_alerted", set())
