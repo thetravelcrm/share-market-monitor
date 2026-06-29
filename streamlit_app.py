@@ -811,8 +811,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.56"
-_APP_BUILD   = "29 Jun 2026 15:37"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.57"
+_APP_BUILD   = "29 Jun 2026 15:50"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3470,6 +3470,15 @@ def _render_spreads(token: str):
         elif _market_open:
             st.warning("No tradeable SILVERMIC contracts returned by Fyers — the token may "
                        "be disconnected. Try the sidebar Connect, then Refresh.")
+            with st.expander("🔧 Diagnostics"):
+                try:
+                    _dbg = _sps.debug_board(token)
+                    st.write("Fyers token present:", _dbg["token_present"])
+                    st.write("Contracts tried:", _dbg["candidates"])
+                    st.write("Fyers quotes returned:", _dbg["quoted"] or "— none —")
+                    st.write("Tradeable (expiry > 7 wks):", _dbg["tradeable"] or "— none —")
+                except Exception as _de:
+                    st.caption(f"diagnostics failed: {_de}")
         else:
             st.caption("No stored spread history yet — it fills in once the market opens "
                        "(or run the 24/7 cron).")

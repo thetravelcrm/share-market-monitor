@@ -54,33 +54,26 @@ def _candidate_contracts(today: date) -> list[dict]:
                 "price":     0.0,
             })
     out.sort(key=lambda c: c["expiry"])
-    return out[:6]    # only the nearest contracts are listed; bounds the quote calls
+    return out[:4]    # only the nearest contracts are listed; bounds the quote calls
 
 
-def _parse_quote_resp(resp) -> dict[str, dict]:
-    out: dict[str, dict] = {}
-    if not resp or resp.get("code") != 200:
-        return out
-    for item in resp.get("d", []) or []:
-        sym = item.get("n", "")
-        v = item.get("v", {}) or {}
-        lp = v.get("lp", 0)
-        if sym and lp:
-            out[sym] = {
-                "last_price": float(lp),
-                "prev_close": float(v.get("prev_close_price", lp) or lp),
-                "high":       float(v.get("high_price", lp) or lp),
-                "low":        float(v.get("low_price", lp) or lp),
-                "volume":     int(v.get("volume", 0) or 0),
-            }
-    return out
+def _quote_val(v: dict) -> dict:
+    lp = v.get("lp", 0)
+    return {
+        "last_price": float(lp),
+        "prev_close": float(v.get("prev_close_price", lp) or lp),
+        "high":       float(v.get("high_price", lp) or lp),
+        "low":        float(v.get("low_price", lp) or lp),
+        "volume":     int(v.get("volume", 0) or 0),
+    }
 
 
 def quote_many(quote_syms: list[str], token: str) -> dict[str, dict]:
     """
-    Quote several Fyers symbols. Tries one batched call; if Fyers rejects the whole
-    batch (it does when ANY symbol is an unlisted/expired contract), falls back to
-    per-symbol quotes and skips the ones that fail. Returns {symbol: {last_price,…}}.
+    Quote several Fyers symbols. Tries one batched call (mapping by the response's
+    "n" field), then quotes any STILL-missing symbol individually and maps the result
+    to the symbol WE queried (robust — does not depend on the response echoing "n").
+    Skips unlisted/expired contracts that error. Returns {symbol: {last_price,…}}.
     """
     out: dict[str, dict] = {}
     if not quote_syms:
@@ -88,15 +81,27 @@ def quote_many(quote_syms: list[str], token: str) -> dict[str, dict]:
     try:
         from fyers_fetcher import get_fyers_model
         fyers = get_fyers_model(token)
+        # 1. Batch (best effort) — map by the echoed symbol name when present.
         try:
-            out = _parse_quote_resp(fyers.quotes({"symbols": ",".join(quote_syms)}))
+            resp = fyers.quotes({"symbols": ",".join(quote_syms)})
+            if resp.get("code") == 200:
+                for item in resp.get("d", []) or []:
+                    n = item.get("n", "")
+                    v = item.get("v", {}) or {}
+                    if n and v.get("lp", 0):
+                        out[n] = _quote_val(v)
         except Exception:
-            out = {}
-        if out:
-            return out
-        for s in quote_syms:                     # batch failed → quote each, skip invalid
+            pass
+        # 2. Per-symbol for anything still missing — map to the queried symbol.
+        for s in [x for x in quote_syms if x not in out]:
             try:
-                out.update(_parse_quote_resp(fyers.quotes({"symbols": s})))
+                resp = fyers.quotes({"symbols": s})
+                if resp.get("code") != 200:
+                    continue
+                d = resp.get("d") or []
+                v = (d[0].get("v") if d else {}) or {}
+                if v.get("lp", 0):
+                    out[s] = _quote_val(v)   # assign to the symbol we asked for
             except Exception:
                 continue
     except Exception:
@@ -283,6 +288,18 @@ def get_spread_board(token: str) -> tuple[list[dict], list[dict], dict]:
     spreads = pairwise_spreads(contracts)
     minmax = update_and_get_minmax(spreads) if spreads else {}
     return contracts, spreads, minmax
+
+
+def debug_board(token: str) -> dict:
+    """Diagnostics for the UI when no contracts resolve: what was tried, what came back."""
+    cands = _candidate_contracts(_ist_today())
+    quotes = quote_many([c["quote_sym"] for c in cands], token)
+    return {
+        "token_present": bool(token),
+        "candidates":    [f"{c['label']} · {c['quote_sym']} · dte {c['dte']}" for c in cands],
+        "quoted":        {k: v["last_price"] for k, v in quotes.items()},
+        "tradeable":     [c["label"] for c in tradeable_contracts(token)],
+    }
 
 
 def fmt_ts_ist(iso: str) -> str:
