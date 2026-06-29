@@ -43,16 +43,22 @@ def map_stocks(item: NewsItem, sentiment: SentimentResult) -> list[StockMatch]:
     matched: dict[str, StockMatch] = {}
 
     # ── 1. Direct keyword match (whole-word, case-insensitive) ──
+    # A real catalyst names the stock in the HEADLINE. A keyword found only in the
+    # body/summary is usually a peer or passing mention (e.g. a defence article about
+    # Apollo Micro that lists "Bharat Electronics" among peers) — tag those as a weak
+    # "Mention" so they can't fire an EXTREME Direct signal.
+    _title = item.title or ""
     for symbol, meta in STOCK_UNIVERSE.items():
         for kw in meta["keywords"]:
             if _kw_match(kw, item.raw_text):
+                rel = "Direct" if _kw_match(kw, _title) else "Mention"
                 if symbol not in matched:
                     matched[symbol] = StockMatch(
                         symbol=symbol,
                         name=meta["name"],
                         sector=meta["sector"],
-                        relation="Direct",
-                        match_reason=f'keyword: "{kw}"',
+                        relation=rel,
+                        match_reason=f'keyword: "{kw}"' + ("" if rel == "Direct" else " (body mention)"),
                     )
                 break
 
@@ -85,6 +91,6 @@ def map_stocks(item: NewsItem, sentiment: SentimentResult) -> list[StockMatch]:
                     match_reason=f"sector peer: {sector}",
                 )
 
-    # Sort: Direct first, then Sectoral, then Macro
-    order = {"Direct": 0, "Sectoral": 1, "Macro": 2}
-    return sorted(matched.values(), key=lambda x: (order[x.relation], x.symbol))
+    # Sort: Direct first, then Sectoral, then Macro, then weak body Mentions
+    order = {"Direct": 0, "Sectoral": 1, "Macro": 2, "Mention": 3}
+    return sorted(matched.values(), key=lambda x: (order.get(x.relation, 4), x.symbol))

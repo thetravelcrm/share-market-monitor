@@ -514,6 +514,11 @@ def _calculate_impact_strength(
     if getattr(sentiment, "is_recap", False):
         return "LOW", score
 
+    # Body-only "Mention" (the stock isn't in the headline) — a peer/passing mention,
+    # not a catalyst. Cap at LOW so the strict filter rejects it (no EXTREME signal).
+    if match.relation == "Mention":
+        return "LOW", score
+
     if match.relation == "Direct":
         # Direct mention: amplify + allow category boost → can reach EXTREME
         score = min(1.0, score * 1.4)
