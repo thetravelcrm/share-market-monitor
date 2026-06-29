@@ -51,19 +51,38 @@ def run_pipeline(
     """
     result = PipelineResult(run_time=datetime.now(tz=timezone.utc), items_total=0, items_analyzed=0)
 
-    # ── 0. NSE market data (non-blocking, all silent-fail) ────
+    # ── 0. NSE market data (non-blocking, parallel, hard time-budget) ────
+    # NSE blocks datacenter IPs (Streamlit Cloud), so these calls can be slow/fail.
+    # Run them concurrently and move on after a short budget — this data is
+    # supplementary (FII/DII, deals → smart money), never worth stalling the scan.
     if progress_cb: progress_cb("Fetching NSE market data…", 0.02)
     _smart_money: dict = {}
     try:
+        import concurrent.futures as _cf
         from nse_data import fetch_fii_dii, fetch_bulk_deals, fetch_block_deals, \
                              fetch_corporate_events, fetch_gift_nifty, build_smart_money_map
-        result.fii_dii          = fetch_fii_dii()
-        result.bulk_deals       = fetch_bulk_deals()
-        result.block_deals      = fetch_block_deals()
-        result.corporate_events = fetch_corporate_events(days_ahead=7)
-        result.nifty_data       = fetch_gift_nifty()
-        # Smart-money confluence: per-symbol institutional buy/sell from today's deals
+        _ex = _cf.ThreadPoolExecutor(max_workers=5)
+        _futs = {
+            "fii":    _ex.submit(fetch_fii_dii),
+            "bulk":   _ex.submit(fetch_bulk_deals),
+            "block":  _ex.submit(fetch_block_deals),
+            "events": _ex.submit(fetch_corporate_events, 7),
+            "nifty":  _ex.submit(fetch_gift_nifty),
+        }
+        _cf.wait(list(_futs.values()), timeout=12)   # whole step bounded to ~12s
+        def _res(key, default):
+            f = _futs[key]
+            try:
+                return f.result(timeout=0) if f.done() else default
+            except Exception:
+                return default
+        result.fii_dii          = _res("fii", None)
+        result.bulk_deals       = _res("bulk", [])
+        result.block_deals      = _res("block", [])
+        result.corporate_events = _res("events", [])
+        result.nifty_data       = _res("nifty", None)
         _smart_money = build_smart_money_map(result.bulk_deals, result.block_deals)
+        _ex.shutdown(wait=False)   # don't block on stragglers
     except Exception:
         pass
 

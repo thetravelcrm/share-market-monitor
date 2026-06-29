@@ -51,28 +51,26 @@ def _proxy_urls(url: str) -> list[str]:
     ]
 
 
-def _nse_get(path: str, timeout: int = 10) -> Optional[dict | list]:
+def _nse_get(path: str, timeout: int = 5) -> Optional[dict | list]:
     url = f"https://www.nseindia.com/api/{path}"
-    # 1. Direct, with a cookie-warmed session (works in the app most of the time)
+    # 1. Direct, with a cookie-warmed session (works off datacenter IPs).
     try:
-        s    = _get_session()
-        resp = s.get(url, timeout=timeout)
+        resp = _get_session().get(url, timeout=timeout)
         if resp.status_code == 200:
             return resp.json()
     except Exception:
         pass
-    # 2. Free-proxy fallback (best-effort, for IP-blocked environments like the cron)
+    # 2. ONE free-proxy attempt (best-effort). NSE's API is cookie-gated so a plain
+    #    proxy usually can't fetch it — kept short and single so a blocked IP can't
+    #    stall the pipeline (callers degrade gracefully to None).
     import json as _json
-    for purl in _proxy_urls(url):
-        try:
-            r = requests.get(purl, timeout=timeout + 8,
-                             headers={"User-Agent": _HEADERS["User-Agent"]})
-            if r.status_code == 200:
-                txt = r.text.strip()
-                if txt[:1] in ("{", "["):
-                    return _json.loads(txt)
-        except Exception:
-            continue
+    try:
+        r = requests.get(_proxy_urls(url)[0], timeout=timeout,
+                         headers={"User-Agent": _HEADERS["User-Agent"]})
+        if r.status_code == 200 and r.text.strip()[:1] in ("{", "["):
+            return _json.loads(r.text)
+    except Exception:
+        pass
     return None
 
 
