@@ -64,29 +64,22 @@ def prefetch_prices(symbols: list[str]) -> None:
     """
     now = time.time()
 
-    # Skip MCX COMEX symbols when Fyers is connected — live INR prices come from Fyers
     _fyers_available = bool(_get_fyers_token())
+    # When Fyers is connected, MCX-COMEX symbols get live INR per-symbol via Fyers in
+    # analyze_impact — exclude them from the yfinance batch (SI=F etc. lag the live MCX).
+    if _fyers_available:
+        symbols = [s for s in symbols if s not in _MCX_CONV]
     # Only fetch symbols not already in cache
     to_fetch = [s for s in symbols
                 if s not in _price_cache or (now - _price_cache[s][0]) >= _PRICE_CACHE_TTL]
     if not to_fetch:
         return
 
-    # ── Fyers is the DEFAULT source when a token is active ──────────────
-    # Warm the cache per-symbol via the Fyers-first path (live quote + Fyers daily
-    # history for technicals). yfinance stays as the automatic per-symbol fallback
-    # inside _fetch_price_uncached (e.g. once the token expires at midnight IST).
-    if _fyers_available:
-        logger.info("Prefetching %d symbols via Fyers…", len(to_fetch))
-        for s in to_fetch:
-            try:
-                _fetch_price(s)          # populates _price_cache (Fyers → yfinance fallback)
-            except Exception as exc:
-                logger.debug("Fyers prefetch failed for %s: %s", s, exc)
-            time.sleep(0.1)              # gentle on Fyers rate limits
-        return
-
-    # ── No Fyers token → fast yfinance batch (fallback) ────────────────
+    # ── Fast yfinance batch for the bulk scan ──────────────────────────
+    # Fyers has no cheap bulk-history API, so per-symbol Fyers does NOT scale to the
+    # full ~2000-stock universe (a wide scan maps to many symbols). yf.download pulls
+    # everything in one threaded request. NSE technicals come from this batch; the
+    # SILVERMIC / Spreads / MCX paths still use Fyers directly for live intraday data.
     tickers = [_MCX_PROXY.get(s, f"{s}.NS") for s in to_fetch]
     logger.info("Batch-prefetching %d symbols via yf.download()…", len(tickers))
     try:
@@ -589,11 +582,16 @@ def analyze_impact(
         vol_ratio   = 1.0
 
         if fetch_prices:
+            # Was it already warm in the cache (prefetched)? Only sleep on a real
+            # network fetch, so a fully-prefetched scan doesn't accumulate dead time.
+            _c = _price_cache.get(match.symbol)
+            _was_cached = _c is not None and (time.time() - _c[0]) < _PRICE_CACHE_TTL
             price_data = _fetch_price(match.symbol)
             if price_data:
                 actual_move = price_data.day_change_pct
                 vol_ratio   = price_data.volume_ratio
-            time.sleep(0.2)
+            if not _was_cached:
+                time.sleep(0.2)   # politeness only when we actually hit the network
 
         reaction = _reaction_status(expected_move, actual_move, vol_ratio)
 

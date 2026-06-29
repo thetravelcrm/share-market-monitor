@@ -26,6 +26,15 @@ class StockMatch:
     match_reason: str    # keyword or sector that triggered match
 
 
+# The cascade was designed for the curated universe (sectors of ~10-26 stocks).
+# With the full NSE universe, sectors are huge (e.g. "Other" ~900), so an
+# uncapped cascade maps one headline to 100+ symbols and the price prefetch
+# grinds for minutes. Cap peers per sector (the list is curated-first, so the
+# cap keeps the most liquid names) and never cascade the unclassified bucket.
+_MAX_SECTOR_CASCADE = 12
+_NO_CASCADE_SECTORS = {"Other"}
+
+
 def map_stocks(item: NewsItem, sentiment: SentimentResult) -> list[StockMatch]:
     """
     Return a deduplicated list of stocks affected by a news item,
@@ -49,7 +58,9 @@ def map_stocks(item: NewsItem, sentiment: SentimentResult) -> list[StockMatch]:
 
     # ── 2. Sector cascade from macro keywords ─────────────────
     for sector in sentiment.macro_sectors:
-        for symbol in SECTOR_STOCKS.get(sector, []):
+        if sector in _NO_CASCADE_SECTORS:
+            continue
+        for symbol in SECTOR_STOCKS.get(sector, [])[:_MAX_SECTOR_CASCADE]:
             if symbol not in matched:
                 matched[symbol] = StockMatch(
                     symbol=symbol,
@@ -62,7 +73,9 @@ def map_stocks(item: NewsItem, sentiment: SentimentResult) -> list[StockMatch]:
     # ── 3. Sector siblings of direct matches (indirect impact) ─
     direct_sectors = {v.sector for v in matched.values() if v.relation == "Direct"}
     for sector in direct_sectors:
-        for symbol in SECTOR_STOCKS.get(sector, []):
+        if sector in _NO_CASCADE_SECTORS:
+            continue
+        for symbol in SECTOR_STOCKS.get(sector, [])[:_MAX_SECTOR_CASCADE]:
             if symbol not in matched:
                 matched[symbol] = StockMatch(
                     symbol=symbol,
