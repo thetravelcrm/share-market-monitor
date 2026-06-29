@@ -803,8 +803,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.58"
-_APP_BUILD   = "29 Jun 2026 15:57"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.59"
+_APP_BUILD   = "29 Jun 2026 16:08"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header

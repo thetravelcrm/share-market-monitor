@@ -45,10 +45,12 @@ def _candidate_contracts(today: date) -> list[dict]:
                 continue
             mmm = exp.strftime("%b").upper()          # "AUG"
             yy = f"{yr % 100:02d}"                     # "26"
+            # Fyers MCX futures use the FUT suffix for BOTH quotes and history.
+            fut = f"MCX:SILVERMIC{yy}{mmm}FUT"
             out.append({
-                "label":     f"{exp.strftime('%b')}-{yy}",        # "Aug-26"
-                "quote_sym": f"MCX:SILVERMIC{yy}{mmm}",           # quote (no FUT)
-                "hist_sym":  f"MCX:SILVERMIC{yy}{mmm}FUT",        # history (FUT)
+                "label":     f"{exp.strftime('%b')}-{yy}",   # "Aug-26"
+                "quote_sym": fut,
+                "hist_sym":  fut,
                 "expiry":    exp.isoformat(),
                 "dte":       (exp - today).days,
                 "price":     0.0,
@@ -109,20 +111,35 @@ def quote_many(quote_syms: list[str], token: str) -> dict[str, dict]:
     return out
 
 
+def _last_price_from_history(token: str, hist_sym: str) -> float:
+    """Latest traded price = most recent 15m candle close (Fyers history API, which
+    works for MCX contracts even when fyers.quotes returns nothing)."""
+    try:
+        from silvermic_continuous import _fetch_one
+        now = datetime.now(timezone.utc)
+        df = _fetch_one(hist_sym, token, "15",
+                        (now - timedelta(days=5)).strftime("%Y-%m-%d"),
+                        now.strftime("%Y-%m-%d"))
+        if df is not None and not df.empty:
+            return float(df["Close"].iloc[-1])
+    except Exception:
+        pass
+    return 0.0
+
+
 def tradeable_contracts(token: str, min_days: int = _TRADEABLE_MIN_DAYS) -> list[dict]:
-    """Tradeable SILVERMIC contracts: valid live quote AND expiry > min_days away."""
+    """Tradeable SILVERMIC contracts: priced AND expiry > min_days away. Price comes
+    from fyers.quotes if available, else the latest history candle (reliable for MCX)."""
     today = _ist_today()
-    cands = _candidate_contracts(today)
+    cands = [c for c in _candidate_contracts(today) if c["dte"] > min_days]
     quotes = quote_many([c["quote_sym"] for c in cands], token)
     out = []
     for c in cands:
         q = quotes.get(c["quote_sym"])
-        if not q or q["last_price"] <= 0:
-            continue
-        if c["dte"] <= min_days:      # within 7 weeks of expiry -> not tradeable
-            continue
-        c["price"] = round(q["last_price"], 2)
-        out.append(c)
+        price = q["last_price"] if (q and q["last_price"] > 0) else _last_price_from_history(token, c["hist_sym"])
+        if price and price > 0:
+            c["price"] = round(price, 2)
+            out.append(c)
     out.sort(key=lambda c: c["expiry"])
     return out
 
