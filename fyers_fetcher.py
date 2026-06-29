@@ -332,7 +332,10 @@ def get_quote(symbol: str, access_token: str) -> Optional[dict]:
     try:
         fyers = get_fyers_model(access_token)
         if symbol in _MCX_SYMBOLS:
-            fyers_sym = _mcx_fyers_symbol(symbol)
+            # MCX futures quote symbols need the "FUT" suffix too (same as history).
+            # Without it Fyers returns nothing and we silently fell back to yfinance,
+            # so MCX-metal news quotes were never actually on the Fyers feed.
+            fyers_sym = _mcx_fyers_symbol(symbol) + "FUT"
         else:
             fyers_sym = f"NSE:{symbol}-EQ"
         resp = fyers.quotes({"symbols": fyers_sym})
@@ -374,8 +377,8 @@ def get_history(symbol: str, access_token: str,
     import pandas as pd
     try:
         fyers = get_fyers_model(access_token)
-        # MCX history symbols require the "FUT" suffix (e.g. MCX:SILVERMIC26APRFUT)
-        # whereas quote symbols omit it (MCX:SILVERMIC26APR)
+        # MCX futures symbols require the "FUT" suffix (e.g. MCX:SILVERMIC26APRFUT)
+        # for BOTH history and quotes.
         fyers_sym = (_mcx_fyers_symbol(symbol) + "FUT") if symbol in _MCX_SYMBOLS else f"NSE:{symbol}-EQ"
         resp = fyers.history({
             "symbol":      fyers_sym,
