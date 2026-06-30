@@ -11,9 +11,26 @@ from news_fetcher import NewsItem
 from sentiment_analyzer import SentimentResult
 
 
+# Generic single-word keywords (often a surname) auto-derived from company names can
+# cross-match a DIFFERENT entity. Map such a keyword to phrases where the word belongs to
+# something else; those phrases are stripped before matching so the stock isn't falsely
+# hit. e.g. "Morgan Stanley" (the bank/analyst) must not fire STANLEY (Stanley Lifestyles).
+_AMBIGUOUS_KEYWORDS = {
+    "stanley": ["morgan stanley"],
+}
+
+
 def _kw_match(keyword: str, text: str) -> bool:
     """Case-insensitive whole-word match (word boundaries).
-    Prevents 'tata' matching inside 'data', or 'ai' matching inside 'rain'."""
+    Prevents 'tata' matching inside 'data', or 'ai' matching inside 'rain'. For an
+    ambiguous keyword, first strip phrases where the word belongs to another entity
+    (e.g. 'morgan stanley') so they can't trigger a false match."""
+    guards = _AMBIGUOUS_KEYWORDS.get(keyword.lower())
+    if guards:
+        t = text.lower()
+        for g in guards:
+            t = t.replace(g, " ")
+        return bool(re.search(r'\b' + re.escape(keyword.lower()) + r'\b', t))
     return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text, re.IGNORECASE))
 
 
