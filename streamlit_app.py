@@ -296,7 +296,7 @@ def impact_score(strength: str) -> float:
 #  DeepSeek AI analysis helpers (real-time, grounded second opinion)
 # ═══════════════════════════════════════════════════════════════
 
-def _render_ai_verdict(v):
+def _render_ai_verdict(v, label: str = "DeepSeek"):
     """Render a deepseek_analyzer.AIVerdict (CONFIRM/CAUTION/AVOID + reasons)."""
     if v is None:
         return
@@ -306,7 +306,7 @@ def _render_ai_verdict(v):
     _c = {"CONFIRM": "#00ff88", "CAUTION": "#ffaa33", "AVOID": "#ff4455",
           "INFO": "#a8b0d0"}.get(v.verdict, "#a8b0d0")
     st.markdown(
-        f"<b style='color:{_c}'>🤖 DeepSeek: {v.verdict}</b> "
+        f"<b style='color:{_c}'>🤖 {label}: {v.verdict}</b> "
         f"<span style='color:#6b7280;font-size:11px'>· {v.confidence}% conviction</span>",
         unsafe_allow_html=True,
     )
@@ -316,8 +316,23 @@ def _render_ai_verdict(v):
     st.caption("AI second opinion on the data above — not financial advice.")
 
 
+def _ai_render_flash_auto(sig, imp):
+    """Automatic DeepSeek FLASH verdict (fast cheap model, no reasoning) shown inline
+    on a card. Uses deepseek_analyzer's in-process cache, so it calls once per unique
+    signal and reuses the result on every rerun — no repeat billing, no page hang."""
+    try:
+        import deepseek_analyzer as _dsa
+    except Exception:
+        return
+    if not _dsa.is_configured():
+        return
+    _render_ai_verdict(_dsa.screen_signal(sig, imp), label="DeepSeek ⚡ Flash")
+
+
 def _ai_render_check(sig, imp, key: str):
-    """Per-signal '🤖 AI Reality Check' button + result. Hidden unless configured."""
+    """Per-signal '🔬 AI Deep Check (Pro)' button + result. Hidden unless configured.
+    The Pro (reasoning) model is on demand — it is slow/expensive, so it never runs
+    automatically; the inline Flash verdict above the card covers the auto screen."""
     try:
         import deepseek_analyzer as _dsa
     except Exception:
@@ -325,11 +340,11 @@ def _ai_render_check(sig, imp, key: str):
     if not _dsa.is_configured():
         return
     _rk = "aires_" + key
-    if st.button("🤖 AI Reality Check", key="aibtn_" + key,
-                 help="DeepSeek second opinion, grounded only in this signal's data"):
-        with st.spinner("DeepSeek analysing this setup…"):
+    if st.button("🔬 AI Deep Check (Pro)", key="aibtn_" + key,
+                 help="DeepSeek Pro (reasoning) deep second opinion, grounded only in this signal's data"):
+        with st.spinner("DeepSeek (Pro) analysing this setup…"):
             st.session_state[_rk] = _dsa.analyze_signal(sig, imp)
-    _render_ai_verdict(st.session_state.get(_rk))
+    _render_ai_verdict(st.session_state.get(_rk), label="DeepSeek 🔬 Pro")
 
 
 def _ai_render_market_brief(signals, key: str, context: str = ""):
@@ -803,8 +818,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.62"
-_APP_BUILD   = "29 Jun 2026 20:00"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.63"
+_APP_BUILD   = "30 Jun 2026 14:32"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1437,7 +1452,7 @@ with tab_signals:
             f"NO TRADE ({len(notrades)})",
         ])
 
-        def render_signal_cards(signals, card_class):
+        def render_signal_cards(signals, card_class, auto_ai: bool = False, ai_cap: int = 12):
             if not signals:
                 st.info("No signals in this category.")
                 return
@@ -1728,11 +1743,14 @@ with tab_signals:
                                   sig.entry_low, sig.stop_loss, sig.target1, sig.target2,
                                   sig.risk_reward, sig.confidence, sig.edge_type)
                         st.success(f"✅ {sig.symbol} logged to Trade Journal")
-                # ── DeepSeek AI reality-check on this signal ──
+                # ── Automatic DeepSeek FLASH verdict (cached; capped to actionable cards) ──
+                if auto_ai and _card_idx < ai_cap:
+                    _ai_render_flash_auto(sig, imp)
+                # ── On-demand DeepSeek PRO deep check on this signal ──
                 _ai_render_check(sig, imp, key=f"card_{card_class}_{_card_idx}_{sig.symbol}")
 
-        with sub1: render_signal_cards(buys,     "signal-card-buy")
-        with sub2: render_signal_cards(shorts,   "signal-card-short")
+        with sub1: render_signal_cards(buys,     "signal-card-buy",   auto_ai=True)
+        with sub2: render_signal_cards(shorts,   "signal-card-short", auto_ai=True)
         with sub3: render_signal_cards(avoids,   "signal-card-avoid")
         with sub4: render_signal_cards(notrades, "signal-card-avoid")
 
@@ -1821,8 +1839,8 @@ with tab_mcx:
                 f"BUY ({len(_mb)})", f"SHORT ({len(_ms)})",
                 f"AVOID ({len(_ma)})", f"NO TRADE ({len(_mn)})",
             ])
-            with _mt1: render_signal_cards(_mb, "signal-card-buy")
-            with _mt2: render_signal_cards(_ms, "signal-card-short")
+            with _mt1: render_signal_cards(_mb, "signal-card-buy",   auto_ai=True)
+            with _mt2: render_signal_cards(_ms, "signal-card-short", auto_ai=True)
             with _mt3: render_signal_cards(_ma, "signal-card-avoid")
             with _mt4: render_signal_cards(_mn, "signal-card-avoid")
 
