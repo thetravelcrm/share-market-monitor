@@ -63,6 +63,19 @@ _SILVER_CONTEXT_WORDS: set[str] = {
     "commodity", "safe haven", "silvermic", "mcx", "mining",
 }
 
+# CORE metal words. A broad-MACRO article (Fed / inflation / dollar / industrial …)
+# only counts as silver news when one of THESE appears — weak context like
+# "metal"/"commodity"/"mining" shows up in unrelated economic copy and let noise such
+# as "North Macedonia Industrial Output Pulls Back" or "Pension savings fund
+# infrastructure" score as silver news. Gold/silver/bullion articles are already
+# always-relevant via the specific keywords, so this only gates the macro tier.
+_SILVER_CORE_WORDS: set[str] = {
+    "silver", "gold", "precious", "bullion", "comex", "lbma", "xau", "silvermic",
+}
+_SILVER_CORE_PATTERNS = [
+    re.compile(r'\b' + re.escape(w) + r'\b', re.IGNORECASE) for w in _SILVER_CORE_WORDS
+]
+
 # Pre-compiled patterns for speed
 _STEM_KEYWORDS = {
     "geopolit",
@@ -119,8 +132,9 @@ def _is_silver_relevant(item: NewsItem) -> bool:
         return True
 
     if matched_broad:
-        # Require at least one silver/metal/commodity context word
-        return any(cp.search(text) for cp in _SILVER_CONTEXT_PATTERNS)
+        # Macro article → require a CORE metal word (gold/silver/bullion/comex/…),
+        # not just weak context, so off-topic macro copy doesn't score as silver news.
+        return any(cp.search(text) for cp in _SILVER_CORE_PATTERNS)
 
     return False
 
