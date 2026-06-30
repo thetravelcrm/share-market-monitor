@@ -178,6 +178,34 @@ _INVERSE_COMPILED: list[tuple[list[re.Pattern], float]] = [
 ]
 
 
+# Gold is silver's single most reliable driver (the two are ~85% positively
+# correlated), so gold's OWN price direction beats every macro proxy: gold DOWN →
+# silver bearish, gold UP → silver bullish. VADER can't be trusted here — e.g.
+# "Gold Sinks to Lowest Price as Monthly Loss Looms" reads positive to VADER yet is
+# clearly bearish for silver. We detect a gold mention + the dominant direction.
+_GOLD_MENTION = re.compile(r'\b(gold|bullion|xau)\b', re.IGNORECASE)
+# Direction words. Deliberately EXCLUDE ambiguous ones: "lower/higher" (rates),
+# "weak" (dollar weak = silver BULLISH) — those belong to the macro rules, not gold's
+# own move.
+_GOLD_DOWN_RE = re.compile(
+    r'\b(sink\w*|fall\w*|fell|drop\w*|slide\w*|slid|slump\w*|tumbl\w*|plunge\w*|'
+    r'lowest|declin\w*|loss\w*|losing|sell-?off|retreat\w*)\b', re.IGNORECASE)
+_GOLD_UP_RE = re.compile(
+    r'\b(rally|rallie\w*|rallied|rise\w*|rose|jump\w*|surg\w*|gain\w*|climb\w*|'
+    r'soar\w*|rebound\w*|advanc\w*|record high|all-?time high)\b', re.IGNORECASE)
+
+
+def _gold_correlation_direction(text: str) -> float:
+    """+1 (gold up → silver bullish), -1 (gold down → silver bearish), 0 (no clear
+    gold-price signal). Looks only at a short window after each gold/bullion mention,
+    so an unrelated 'dollar weakens' elsewhere can't flip the gold read."""
+    score = 0
+    for m in _GOLD_MENTION.finditer(text):
+        window = text[m.start(): m.start() + 45]   # the immediate gold clause
+        score += len(_GOLD_UP_RE.findall(window)) - len(_GOLD_DOWN_RE.findall(window))
+    return -1.0 if score < 0 else (1.0 if score > 0 else 0.0)
+
+
 def _apply_inverse_relationships(text: str, base_score: float) -> float:
     """
     Adjust VADER score to reflect silver's actual price direction.
@@ -185,6 +213,12 @@ def _apply_inverse_relationships(text: str, base_score: float) -> float:
     Example: "Dollar rallies to 6-month high" → VADER says +0.4 (positive article).
     But dollar strength is BEARISH for silver, so we return -0.4.
     """
+    # Gold's realized price move is the most reliable signal — check it FIRST.
+    gold_dir = _gold_correlation_direction(text)
+    if gold_dir != 0.0:
+        magnitude = abs(base_score) if abs(base_score) > 0.05 else 0.3
+        return magnitude * gold_dir
+
     for patterns, silver_direction in _INVERSE_COMPILED:
         if any(p.search(text) for p in patterns):
             # Keyword matched.  Use the magnitude of VADER score but apply
