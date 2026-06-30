@@ -9,7 +9,9 @@ name: SILVERMIC Monitor
 
 on:
   schedule:
-    - cron: "*/15 3-18 * * 1-5"   # every 15 min, 03:00-18:59 UTC, weekdays
+    - cron: "*/5 3-18 * * 1-5"    # every 5 min, 03:00-18:59 UTC, weekdays
+                                  # (5-min sampling so a one-bar LONG isn't missed
+                                  #  between runs; minutes are free on this public repo)
   workflow_dispatch: {}            # allow manual "Run workflow" for testing
 
 # Don't let two runs overlap (each does a Fyers login).
