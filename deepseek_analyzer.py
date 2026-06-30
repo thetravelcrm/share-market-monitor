@@ -130,6 +130,11 @@ def _call(system: str, user: str, max_tokens: int = 500,
         # as non-text content blocks, which _parse_verdict / the parser skip.
         payload["thinking"] = {"type": "enabled", "budget_tokens": 2048}
     else:
+        # EXPLICITLY disable thinking. deepseek-v4-flash defaults to thinking mode, so
+        # merely omitting the field makes it spend the whole token budget on reasoning
+        # and return an empty text block. {"type":"disabled"} is the Anthropic-standard
+        # off-switch (temperature is allowed when thinking is disabled).
+        payload["thinking"] = {"type": "disabled"}
         payload["temperature"] = temperature
     try:
         resp = requests.post(_ENDPOINT, headers=headers, data=json.dumps(payload),
@@ -304,9 +309,12 @@ def screen_signal(sig, imp, use_cache: bool = True) -> AIVerdict:
             "justified by the data, or is it a chase / non-catalyst?\n\n" + facts)
     ok, text = _call(_SIGNAL_SYSTEM, user, max_tokens=400,
                      model=get_screen_model(), force_no_thinking=True)
-    if not ok:                       # flash occasionally returns an empty 200 — retry once
+    if not ok:
+        # Fallback: let the flash model think (it defaults to thinking) WITH token
+        # headroom so the text answer isn't starved — reliable even if the endpoint
+        # ignores {"type":"disabled"}.
         ok, text = _call(_SIGNAL_SYSTEM, user, max_tokens=400,
-                         model=get_screen_model(), force_no_thinking=True)
+                         model=get_screen_model(), force_no_thinking=False)
     verdict = (_parse_verdict(text, default_verdict="CAUTION") if ok
                else AIVerdict("ERROR", 0, [], text, ok=False))
     if use_cache:                    # cache success AND failure so we don't re-call every rerun
