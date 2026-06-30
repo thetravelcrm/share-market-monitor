@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.70"
-_APP_BUILD   = "30 Jun 2026 19:30"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.71"
+_APP_BUILD   = "30 Jun 2026 22:43"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3486,19 +3486,44 @@ def _render_spreads(token: str):
         _ccols = st.columns(len(_contracts))
         for _cc, _ct in zip(_ccols, _contracts):
             _cc.metric(f"{_ct['label']} · {_ct['dte']}d", f"₹{_ct['price']:,.0f}")
-        _rows = []
+        _rows, _ts_rows = [], []
         for _sp in _spreads:
             _rec = _minmax.get(_sp["key"], {})
             _mn, _mx = _rec.get("min", {}), _rec.get("max", {})
+            _cur        = _sp["spread"]
+            _mnv, _mxv  = _mn.get("value"), _mx.get("value")
+            _rng = (_mxv - _mnv) if (_mnv is not None and _mxv is not None) else None
+            if _rng and _rng > 0:
+                _pos = max(0.0, min(100.0, (_cur - _mnv) / _rng * 100))
+                if _pos <= 25:
+                    _read, _idea = f"{_pos:.0f}% · CHEAP", "🟢 LONG spread (buy far · sell near)"
+                elif _pos >= 75:
+                    _read, _idea = f"{_pos:.0f}% · RICH", "🔴 SHORT spread (sell far · buy near)"
+                else:
+                    _read, _idea = f"{_pos:.0f}% · FAIR", "⚪ Neutral — wait for an edge"
+            else:
+                _read, _idea = "—", "Backfill to build a range"
             _rows.append({
-                "Pair":               _sp["label"],
-                "Current Spread (₹)": _sp["spread"],
-                "Min (₹)":            _mn.get("value", "—"),
-                "Min @ (IST)":        _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
-                "Max (₹)":            _mx.get("value", "—"),
-                "Max @ (IST)":        _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
+                "Pair":      _sp["label"],
+                "Now (₹)":   _cur,
+                "Min (₹)":   _mnv if _mnv is not None else "—",
+                "Max (₹)":   _mxv if _mxv is not None else "—",
+                "Range (₹)": round(_rng) if _rng else "—",
+                "Position":  _read,
+                "Mean-Reversion Idea": _idea,
+            })
+            _ts_rows.append({
+                "Pair":        _sp["label"],
+                "Min @ (IST)": _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
+                "Max @ (IST)": _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
             })
         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        st.caption("**Now** = live far−near spread. SILVERMIC = 1 kg/lot, so ₹/kg here is also "
+                   "your **₹ P&L per lot pair**. **Position** = where Now sits in its stored "
+                   "min–max band (0%=at min, 100%=at max): low → spread is cheap (bias LONG it), "
+                   "high → rich (bias SHORT it).")
+        with st.expander("🕒 When the min / max occurred"):
+            st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
     else:
         # Market closed, or Fyers returned nothing → show persisted all-time min/max.
         _rows = []
@@ -3533,6 +3558,33 @@ def _render_spreads(token: str):
 
     st.caption("Spread = far-month − near-month price (₹/kg). All-time min/max persists in "
                "your gist; the background cron keeps it gap-free 24/7.")
+
+    with st.expander("📘 How to read & **profit** from these spreads"):
+        st.markdown(
+            "**What it is.** A *calendar spread* is far-month price − near-month price of the "
+            "**same** commodity (SILVERMIC). You trade the GAP between two expiries, not silver's "
+            "direction — so a big up/down move in silver largely cancels (you're long one month, "
+            "short the other). That means **lower risk and lower margin** than an outright trade.\n\n"
+            "**Why the gap exists (contango).** The far month is usually pricier because of carry "
+            "(storage + interest) over the extra months — that's why Feb−Aug (~₹13k) is bigger than "
+            "Nov−Aug (~₹6k): more months = more carry.\n\n"
+            "**How to profit (mean-reversion).** The gap oscillates inside a band:\n"
+            "- Spread near its **MIN** (Position ~0%, *CHEAP*) → **LONG the spread**: BUY the far "
+            "month, SELL the near month. You profit if the gap **widens** back toward the middle.\n"
+            "- Spread near its **MAX** (Position ~100%, *RICH*) → **SHORT the spread**: SELL the far "
+            "month, BUY the near month. You profit if the gap **narrows**.\n"
+            "- Mid-band (*FAIR*) → no edge, wait.\n\n"
+            "**Sizing & P&L.** SILVERMIC = **1 kg per lot**, so the spread in ₹/kg *is* your ₹ P&L "
+            "per lot pair. LONG a spread at ₹6,075 and it reverts to ₹6,800 → **+₹725 per lot pair**. "
+            "Always trade equal lots on both legs (1× far, 1× near); Zerodha gives a margin benefit "
+            "on the hedged pair.\n\n"
+            "**Risks (read this).** Spreads can *trend* (keep widening/narrowing on rate or "
+            "supply shifts) — set a stop in spread terms (e.g. exit if it moves ₹400 against you). "
+            "Far months are **less liquid** (wider bid/ask). Never carry the near leg into its "
+            "expiry week. The **Position/Idea is only meaningful with enough history** — click "
+            "**📥 Backfill 30d** (or let the 24/7 cron run a few weeks) so the band reflects a real "
+            "range, not a day or two."
+        )
 
 
 # Wrap in a Streamlit fragment (>= 1.37 st.fragment, older: experimental_fragment) so the
