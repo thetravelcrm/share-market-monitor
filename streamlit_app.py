@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.67"
-_APP_BUILD   = "30 Jun 2026 17:13"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.68"
+_APP_BUILD   = "30 Jun 2026 18:45"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2661,22 +2661,29 @@ _SM_CONFIG_DEFAULTS = {
 }
 
 def _sm_config_load() -> dict:
-    # Try local file first (works when running locally)
+    cfg = dict(_SM_CONFIG_DEFAULTS)
+    # 1. Saved local file (UI "Save Settings" / local runs) — overlay onto defaults.
     try:
         with open(_SM_CONFIG_PATH) as _f:
-            data = _sm_json.load(_f)
-        return {**_SM_CONFIG_DEFAULTS, **data}
+            cfg.update(_sm_json.load(_f))
     except Exception:
         pass
-    # Fallback: read from Streamlit Cloud secrets
-    cfg = dict(_SM_CONFIG_DEFAULTS)
+    # 2. Streamlit secrets — fill anything still unset. The Slack token is normally a
+    #    SECRET (not typed into the UI), so NEVER let an empty saved value shadow it.
     try:
         _sec = st.secrets
-        cfg["slack_bot_token"] = _sec.get("SLACK_BOT_TOKEN", "")
-        cfg["slack_channel"]   = _sec.get("SLACK_CHANNEL", "#general")
-        cfg["rsi_entry_min"]   = float(_sec.get("SM_RSI_ENTRY_MIN", 52.0))
-        cfg["ema_spread_min"]  = float(_sec.get("SM_EMA_SPREAD_MIN", 0.09))
-        cfg["rsi_bull_level"]  = float(_sec.get("SM_RSI_BULL_LEVEL", 50.0))
+        if not cfg.get("slack_bot_token"):
+            cfg["slack_bot_token"] = _sec.get("SLACK_BOT_TOKEN", "")
+        if not cfg.get("slack_channel"):
+            cfg["slack_channel"] = _sec.get("SLACK_CHANNEL", "#general")
+        for _k, _sk in (("rsi_entry_min", "SM_RSI_ENTRY_MIN"),
+                        ("ema_spread_min", "SM_EMA_SPREAD_MIN"),
+                        ("rsi_bull_level", "SM_RSI_BULL_LEVEL")):
+            if cfg.get(_k) in (None, "") and _sec.get(_sk) is not None:
+                try:
+                    cfg[_k] = float(_sec.get(_sk))
+                except Exception:
+                    pass
     except Exception:
         pass
     return cfg
@@ -2921,40 +2928,59 @@ with tab_silvermic:
             st.session_state["sm_is_perfect"] = _is_perfect
             st.session_state["sm_deep_v"]     = _deep_v
 
-            # Slack on a perfect entry — market-hours guarded + shared dedup so the
-            # app and the cron never double-send. Fires once per setup/day.
+            # Slack on a perfect entry — market-hours guarded + shared dedup so the app
+            # and the cron never double-send. Status is shown (was silently swallowed),
+            # so it's always clear WHY an alert did or didn't go out.
             _sm_bot_token = _sm_cfg.get("slack_bot_token", "")
-            _sm_channel   = _sm_cfg.get("slack_channel", "#general")
+            _sm_channel   = _sm_cfg.get("slack_channel", "") or "#general"
             try:
                 from mcx_calendar import is_market_open as _mkt_open, ist_now as _mkt_ist
                 import monitor_state as _mstate
                 _today_ist = _mkt_ist().strftime("%Y-%m-%d")
-                if (_is_perfect and _sm_bot_token and _mkt_open()
-                        and not _mstate.already_alerted(_today_ist, "PERFECT")):
-                    from notifier import send_slack_alert
-                    _nv_alert = _sm_result.news_verdict or {}
-                    _insights = _nv_alert.get("top_insights", [])
-                    _ep       = (_sm_result.entry or {}).get("entry_price", 0)
-                    _dn = ((f"AI CONFIRM {_deep_v.confidence}% — "
-                            + (_deep_v.reasons[0] if _deep_v and _deep_v.reasons else "clean setup"))
-                           if _deep_v else "Technical + News confirmed")
-                    if send_slack_alert(_sm_bot_token, _sm_channel, {
-                        "header":        "🎯 PERFECT ENTRY — SILVERMIC LONG",
-                        "entry":         _ep,
-                        "stop_loss":     (_sm_result.entry or {}).get("stop_loss", 0),
-                        "t1":            round(_ep + 1500, 0),
-                        "t2":            round(_ep + 4000, 0),
-                        "t3":            round(_ep + 11000, 0),
-                        "news_score":    _nv_alert.get("score", "N/A"),
-                        "news_label":    _nv_alert.get("label", "N/A"),
-                        "news_decision": _dn,
-                        "top_insight":   _insights[0] if _insights else "Technical + News + AI all CONFIRMED",
-                    }):
-                        _mstate.mark_alerted(_today_ist, "PERFECT")
-                elif not _is_perfect and _mstate.already_alerted(_today_ist, "PERFECT"):
-                    _mstate.reset(_today_ist)   # setup gone — allow the next one to alert
-            except Exception:
-                pass
+                if _is_perfect:
+                    if not _sm_bot_token:
+                        st.warning("🎯 PERFECT ENTRY detected — but **no Slack token**. Add "
+                                   "`SLACK_BOT_TOKEN` (xoxb-…) in Settings → Secrets, or the "
+                                   "Slack field in ⚙️ Signal Thresholds above.")
+                    elif not _mkt_open():
+                        st.caption("🎯 Perfect entry — MCX closed, alert held until market hours.")
+                    elif _mstate.already_alerted(_today_ist, "PERFECT"):
+                        st.success("🎯 PERFECT ENTRY — already alerted today (deduped with the cron).")
+                    else:
+                        from notifier import send_slack_alert
+                        _nv_alert = _sm_result.news_verdict or {}
+                        _insights = _nv_alert.get("top_insights", [])
+                        _ep       = (_sm_result.entry or {}).get("entry_price", 0)
+                        _dn = ((f"AI CONFIRM {_deep_v.confidence}% — "
+                                + (_deep_v.reasons[0] if _deep_v and _deep_v.reasons else "clean setup"))
+                               if _deep_v else "Technical + News confirmed")
+                        if send_slack_alert(_sm_bot_token, _sm_channel, {
+                            "header":        "🎯 PERFECT ENTRY — SILVERMIC LONG",
+                            "entry":         _ep,
+                            "stop_loss":     (_sm_result.entry or {}).get("stop_loss", 0),
+                            "t1":            round(_ep + 1500, 0),
+                            "t2":            round(_ep + 4000, 0),
+                            "t3":            round(_ep + 11000, 0),
+                            "news_score":    _nv_alert.get("score", "N/A"),
+                            "news_label":    _nv_alert.get("label", "N/A"),
+                            "news_decision": _dn,
+                            "top_insight":   _insights[0] if _insights else "Technical + News + AI all CONFIRMED",
+                        }):
+                            _mstate.mark_alerted(_today_ist, "PERFECT")
+                            st.success("🎯 PERFECT ENTRY — Slack alert sent ✅")
+                        else:
+                            st.error(f"Slack rejected the send. Check the token starts with "
+                                     f"`xoxb-` and the bot is **invited to {_sm_channel}** "
+                                     f"(Slack → channel → Integrations → Add app).")
+                else:
+                    if _deep_v is not None:
+                        # tech + news gates were green, but the Pro gate didn't CONFIRM ≥70
+                        st.caption(f"🤖 Pro gate held it: DeepSeek {_deep_v.verdict} "
+                                   f"{_deep_v.confidence}% (a perfect entry needs CONFIRM ≥ 70%).")
+                    if _mstate.already_alerted(_today_ist, "PERFECT"):
+                        _mstate.reset(_today_ist)   # setup gone — allow the next one to alert
+            except Exception as _alert_exc:
+                st.caption(f"alert path error: {_alert_exc}")
 
             # ── Auto-record entry when LONG signal fires ──────────────
             if "sm_active_trade" not in st.session_state:
