@@ -302,12 +302,14 @@ def screen_signal(sig, imp, use_cache: bool = True) -> AIVerdict:
 
     user = ("Quickly screen this trade setup. Is the PROPOSED ACTION actually "
             "justified by the data, or is it a chase / non-catalyst?\n\n" + facts)
-    ok, text = _call(_SIGNAL_SYSTEM, user, max_tokens=300,
+    ok, text = _call(_SIGNAL_SYSTEM, user, max_tokens=400,
                      model=get_screen_model(), force_no_thinking=True)
-    if not ok:
-        return AIVerdict("ERROR", 0, [], text, ok=False)
-    verdict = _parse_verdict(text, default_verdict="CAUTION")
-    if use_cache:
+    if not ok:                       # flash occasionally returns an empty 200 — retry once
+        ok, text = _call(_SIGNAL_SYSTEM, user, max_tokens=400,
+                         model=get_screen_model(), force_no_thinking=True)
+    verdict = (_parse_verdict(text, default_verdict="CAUTION") if ok
+               else AIVerdict("ERROR", 0, [], text, ok=False))
+    if use_cache:                    # cache success AND failure so we don't re-call every rerun
         _cache[ckey] = verdict
     return verdict
 

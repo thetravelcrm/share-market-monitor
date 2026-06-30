@@ -326,7 +326,11 @@ def _ai_render_flash_auto(sig, imp):
         return
     if not _dsa.is_configured():
         return
-    _render_ai_verdict(_dsa.screen_signal(sig, imp), label="DeepSeek ⚡ Flash")
+    _v = _dsa.screen_signal(sig, imp)
+    # Automatic badge: only show a real verdict — never clutter the card with a
+    # transient API error ("empty response" etc.). The Pro button stays for a manual look.
+    if getattr(_v, "ok", False):
+        _render_ai_verdict(_v, label="DeepSeek ⚡ Flash")
 
 
 def _ai_render_check(sig, imp, key: str):
@@ -818,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.63"
-_APP_BUILD   = "30 Jun 2026 14:32"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.64"
+_APP_BUILD   = "30 Jun 2026 15:28"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
