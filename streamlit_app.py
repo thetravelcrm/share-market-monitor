@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.73"
-_APP_BUILD   = "06 Jul 2026 18:33"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.74"
+_APP_BUILD   = "06 Jul 2026 19:02"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2657,7 +2657,9 @@ _SM_CONFIG_DEFAULTS = {
     "ema_spread_min": 0.09,
     "rsi_bull_level": 50.0,
     "slack_bot_token": "",
-    "slack_channel": "#general",
+    # Empty by default so the SLACK_CHANNEL secret can fill it — a non-empty default
+    # ("#general") would shadow the secret after every redeploy (config file is wiped).
+    "slack_channel": "",
 }
 
 def _sm_config_load() -> dict:
