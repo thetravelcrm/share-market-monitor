@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.72"
-_APP_BUILD   = "06 Jul 2026 18:05"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.73"
+_APP_BUILD   = "06 Jul 2026 18:33"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3513,9 +3513,13 @@ def _render_spreads(token: str):
                     _read, _idea = f"{_pos:.0f}% · FAIR", "⚪ Neutral — wait for an edge"
             else:
                 _read, _idea = "—", "Backfill to build a range"
+            _td = _rec.get("today") or {}
+            _today_txt = (f"{_td['min']:,.0f} – {_td['max']:,.0f}"
+                          if _td.get("min") is not None and _td.get("max") is not None else "—")
             _rows.append({
                 "Pair":      _sp["label"],
                 "Now (₹)":   _cur,
+                "Today (₹)": _today_txt,
                 "Min (₹)":   _mnv if _mnv is not None else "—",
                 "Max (₹)":   _mxv if _mxv is not None else "—",
                 "Range (₹)": round(_rng) if _rng else "—",
@@ -3528,6 +3532,17 @@ def _render_spreads(token: str):
                 "Max @ (IST)": _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
             })
         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        # Heartbeat: prove the record is alive even when the all-time band hasn't
+        # moved for days (min/max only change on a NEW extreme — that's by design).
+        try:
+            _meta = _sps.last_sample_info()
+            if _meta.get("last_sample"):
+                st.caption(f"🟢 Record alive — last sampled "
+                           f"{_sps.fmt_ts_ist(_meta['last_sample'])} IST "
+                           f"({_meta.get('by', '?')}). **Today** = this session's range; "
+                           f"Min/Max dates change only when the all-time band breaks.")
+        except Exception:
+            pass
         st.caption("**Now** = live far−near spread. SILVERMIC = 1 kg/lot, so ₹/kg here is also "
                    "your **₹ P&L per lot pair**. **Position** = where Now sits in its stored "
                    "min–max band (0%=at min, 100%=at max): low → spread is cheap (bias LONG it), "

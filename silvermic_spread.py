@@ -205,18 +205,56 @@ def _fold(rec: dict, value: float, ts: str) -> None:
         rec["max"] = {"value": value, "ts": ts}
 
 
+def _ist_date_of(ts_iso: str) -> str:
+    """IST calendar date ('YYYY-MM-DD') of an ISO timestamp; '' if unparseable."""
+    try:
+        dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (dt.astimezone(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+def _fold_today(rec: dict, value: float, ts: str) -> None:
+    """Track TODAY's (IST) session min/max separately — proof in the UI that the
+    record is alive even when the all-time band doesn't move for days."""
+    today = _ist_date_of(datetime.now(timezone.utc).isoformat())
+    if _ist_date_of(ts) != today:
+        return                       # historical fold from a previous day
+    t = rec.get("today") or {}
+    if t.get("date") != today:
+        t = {"date": today}          # new session — reset
+    if "min" not in t or value < t["min"]:
+        t["min"] = value
+    if "max" not in t or value > t["max"]:
+        t["max"] = value
+    rec["today"] = t
+
+
+def _stamp_meta(state: dict, by: str) -> None:
+    state["_meta"] = {"last_sample": datetime.now(timezone.utc).isoformat(), "by": by}
+
+
 def update_and_get_minmax(spreads: list[dict]) -> dict:
     """Fold the current LIVE spread into the persisted all-time min/max. Cheap (no I/O
-    to Fyers). Returns {key: {label, min:{value,ts}, max:{value,ts}}}."""
+    to Fyers). Returns {key: {label, min:{value,ts}, max:{value,ts}, today:{…}}}."""
     state = _load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
     for sp in spreads:
         rec = state.get(sp["key"]) or {}
         rec["label"] = sp["label"]
         _fold(rec, sp["spread"], now_iso)
+        _fold_today(rec, sp["spread"], now_iso)
         state[sp["key"]] = rec
+    _stamp_meta(state, "app")
     _save_state(state)
     return {sp["key"]: state[sp["key"]] for sp in spreads}
+
+
+def last_sample_info() -> dict:
+    """{'last_sample': iso, 'by': 'app'|'cron'} of the most recent record write."""
+    return _load_state().get("_meta") or {}
 
 
 def persisted_minmax() -> dict:
@@ -240,12 +278,16 @@ def cron_sample(token: str, hist_days: int = 2) -> int:
         rec = state.get(sp["key"]) or {}
         rec["label"] = sp["label"]
         _fold(rec, sp["spread"], now_iso)
+        _fold_today(rec, sp["spread"], now_iso)
         ext = _history_spread_extremes(token, sp["near_hist"], sp["far_hist"], hist_days)
         if ext:
             mn, mn_ts, mx, mx_ts = ext
             _fold(rec, mn, mn_ts)
             _fold(rec, mx, mx_ts)
+            _fold_today(rec, mn, mn_ts)
+            _fold_today(rec, mx, mx_ts)
         state[sp["key"]] = rec
+    _stamp_meta(state, "cron")
     _save_state(state)
     return len(spreads)
 
