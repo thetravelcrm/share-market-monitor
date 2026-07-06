@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.71"
-_APP_BUILD   = "30 Jun 2026 22:43"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.72"
+_APP_BUILD   = "06 Jul 2026 18:05"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -2848,8 +2848,8 @@ with tab_silvermic:
                         st.error("Enter Slack Bot Token first.")
                     else:
                         try:
-                            from notifier import send_slack_alert
-                            _ok = send_slack_alert(_t_token, _t_chan, {
+                            import notifier as _ntf
+                            _ok = _ntf.send_slack_alert(_t_token, _t_chan, {
                                 "entry": 246500, "stop_loss": 244000,
                                 "news_score": 7.5, "news_label": "Bullish",
                                 "news_decision": "CONFIRMED",
@@ -2858,7 +2858,17 @@ with tab_silvermic:
                             if _ok:
                                 st.success(f"✅ Test message sent to {_t_chan}")
                             else:
-                                st.error("❌ Failed — check token and invite @demo_app to the channel")
+                                _err = _ntf.LAST_ERROR or "unknown"
+                                _hint = {
+                                    "not_in_channel":    f"The bot isn't in {_t_chan}. In Slack, open the channel → type `/invite @your-bot-name`, then retry.",
+                                    "channel_not_found": f"Channel {_t_chan} not found. Use the exact name (or a channel ID like C0123ABCD); for a private channel the bot must be invited first.",
+                                    "invalid_auth":      "Token is invalid or revoked. Regenerate the **Bot User OAuth Token** in Slack → your app → OAuth & Permissions, and reinstall the app.",
+                                    "token_revoked":     "Token was revoked. Reinstall the Slack app and paste the new xoxb- token.",
+                                    "account_inactive":  "The Slack app/bot is deactivated — re-enable or reinstall it.",
+                                    "missing_scope":     "Bot is missing the `chat:write` scope. Add it in OAuth & Permissions, reinstall, then retry.",
+                                    "bad_token_format":  "Token must start with `xoxb-` (a Bot token, not `xoxp-`/app-level).",
+                                }.get(_err, "Check the token (xoxb-…) and that the bot is invited to the channel.")
+                                st.error(f"❌ Slack error: **{_err}** — {_hint}")
                         except Exception as _te:
                             st.error(f"❌ Error: {_te}")
 

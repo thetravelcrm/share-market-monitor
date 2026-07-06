@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 
 _SLACK_API = "https://slack.com/api/chat.postMessage"
 
+# Exact reason the most recent Slack send failed (Slack's own `error` code, e.g.
+# "not_in_channel", "invalid_auth", "channel_not_found"). "" when the last send was OK.
+# Callers (e.g. the Test Alert button) read this to show an actionable message.
+LAST_ERROR: str = ""
+
 
 def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
     """
@@ -20,7 +25,9 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
                   news_decision, top_insight
     Returns True on success.
     """
+    global LAST_ERROR
     if not bot_token or not bot_token.startswith("xoxb-"):
+        LAST_ERROR = "bad_token_format"
         logger.warning("Invalid Slack bot token — alert skipped")
         return False
 
@@ -90,11 +97,14 @@ def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
         )
         data = resp.json()
         if data.get("ok"):
+            LAST_ERROR = ""
             logger.info("Slack alert sent to %s", channel)
             return True
-        logger.warning("Slack alert failed: %s", data.get("error", "unknown"))
+        LAST_ERROR = data.get("error", "unknown")
+        logger.warning("Slack alert failed: %s", LAST_ERROR)
         return False
     except Exception as e:
+        LAST_ERROR = f"exception: {e}"
         logger.warning("Slack alert exception: %s", e)
         return False
 
