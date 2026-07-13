@@ -60,7 +60,14 @@ def _gist_load() -> list[dict] | None:
             logging.getLogger("history_store").warning(
                 "Gist load failed: HTTP %s — %s", r.status_code, r.text[:200])
             return None
-        content = r.json().get("files", {}).get(_GIST_FILENAME, {}).get("content", "")
+        fmeta = r.json().get("files", {}).get(_GIST_FILENAME, {})
+        # The gists API truncates file content over ~1 MB (mid-string → JSON parse
+        # error). raw_url serves the full file — use it whenever truncated.
+        if fmeta.get("truncated") and fmeta.get("raw_url"):
+            r2 = requests.get(fmeta["raw_url"], headers=headers, timeout=20)
+            content = r2.text if r2.status_code == 200 else ""
+        else:
+            content = fmeta.get("content", "")
         return json.loads(content) if content else []
     except Exception as e:
         import logging
@@ -76,13 +83,15 @@ def _gist_save(entries: list[dict]) -> bool:
         return False
     try:
         import requests
-        payload = {
-            "files": {
-                _GIST_FILENAME: {
-                    "content": json.dumps(entries, indent=2, ensure_ascii=False)
-                }
-            }
-        }
+        # Compact JSON (indent=2 roughly doubles the size) and keep the file well
+        # under the gists API's ~1 MB truncation limit by dropping the OLDEST
+        # entries first (list is chronological; newest at the tail).
+        _MAX_BYTES = 800_000
+        blob = json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
+        while len(blob.encode("utf-8")) > _MAX_BYTES and len(entries) > 50:
+            entries = entries[len(entries) // 4:]        # drop oldest quarter
+            blob = json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
+        payload = {"files": {_GIST_FILENAME: {"content": blob}}}
         r = requests.patch(f"https://api.github.com/gists/{gist_id}",
                            json=payload, headers=headers, timeout=20)
         return r.status_code == 200
