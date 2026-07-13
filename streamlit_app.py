@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.76"
-_APP_BUILD   = "13 Jul 2026 21:10"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.77"
+_APP_BUILD   = "13 Jul 2026 22:47"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3576,7 +3576,7 @@ def _render_spreads(token: str):
                     st.write("Fyers token present:", _dbg["token_present"])
                     st.write("Contracts tried:", _dbg["candidates"])
                     st.write("Fyers quotes returned:", _dbg["quoted"] or "— none —")
-                    st.write("Tradeable (expiry > 7 wks):", _dbg["tradeable"] or "— none —")
+                    st.write("Tradeable (expiry > 1 wk):", _dbg["tradeable"] or "— none —")
                 except Exception as _de:
                     st.caption(f"diagnostics failed: {_de}")
         else:
@@ -3627,7 +3627,8 @@ if _FRAG is not None:
 with tab_spread:
     st.markdown("### 📐 SILVERMIC Calendar Spreads")
     st.caption("Live spread between Zerodha-tradeable SILVERMIC contracts "
-               "(auto-selected: expiry more than 7 weeks away).")
+               "(auto-selected: expiry more than 1 week away — Zerodha blocks "
+               "the final week).")
     _sp_token = st.session_state.get("fyers_token", "")
     if not _sp_token:
         st.info("🔌 Connect Fyers in the sidebar to view live calendar spreads.")

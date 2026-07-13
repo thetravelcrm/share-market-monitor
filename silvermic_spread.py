@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────────────────
 #  silvermic_spread.py — MCX SILVERMIC calendar-spread monitor.
 #
-#  Auto-detects the Zerodha-tradeable SILVERMIC contracts (expiry > 7 weeks /
-#  49 days away — the near month is blocked near expiry), quotes them live via
+#  Auto-detects the Zerodha-tradeable SILVERMIC contracts (expiry > 1 week away —
+#  Zerodha blocks new MCX positions in the final week), quotes them live via
 #  Fyers, computes every pairwise spread (far − near, INR/kg), and tracks the
 #  ALL-TIME min/max spread per pair (value + timestamp) in a GitHub gist so it
 #  survives redeploys.
@@ -23,7 +23,7 @@ from datetime import datetime, timezone, timedelta, date
 _MONTHS = (2, 4, 6, 8, 11)
 _IST = timezone(timedelta(hours=5, minutes=30))
 _STATE_FILE = "silvermic_spread_state.json"
-_TRADEABLE_MIN_DAYS = 49        # > 7 weeks to expiry == tradeable on Zerodha
+_TRADEABLE_MIN_DAYS = 7         # > 1 week to expiry == tradeable on Zerodha
 
 
 def _ist_today() -> date:
