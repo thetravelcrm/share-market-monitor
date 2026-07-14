@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.77"
-_APP_BUILD   = "13 Jul 2026 22:47"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.78"
+_APP_BUILD   = "14 Jul 2026 21:00"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3551,6 +3551,59 @@ def _render_spreads(token: str):
                    "high → rich (bias SHORT it).")
         with st.expander("🕒 When the min / max occurred"):
             st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
+
+        # ── 🔔 Per-pair threshold alerts (watched here every 60s AND by the 24/7 cron) ──
+        with st.expander("🔔 Spread Alerts — Slack when Now crosses your levels"):
+            try:
+                _acfg = _sps.get_alert_config()
+            except Exception:
+                _acfg = {}
+            def _sa_parse(s):
+                try:
+                    s = str(s).replace(",", "").strip()
+                    return float(s) if s else None
+                except Exception:
+                    return None
+            _new_acfg = {}
+            for _sp in _spreads:
+                _c = _acfg.get(_sp["key"]) or {}
+                _sac1, _sac2, _sac3 = st.columns([2, 1, 1])
+                _sac1.markdown(f"**{_sp['label']}**  \nnow ₹{_sp['spread']:,.0f}")
+                _hv = _sac2.text_input("High ≥ (₹)", key=f"sa_hi_{_sp['key']}",
+                                       value=("" if _c.get("high") is None else f"{_c['high']:g}"),
+                                       placeholder="e.g. 7500")
+                _lv = _sac3.text_input("Low ≤ (₹)", key=f"sa_lo_{_sp['key']}",
+                                       value=("" if _c.get("low") is None else f"{_c['low']:g}"),
+                                       placeholder="e.g. 6000")
+                _new_acfg[_sp["key"]] = {"high": _sa_parse(_hv), "low": _sa_parse(_lv)}
+            if st.button("💾 Save alert levels", key="sa_save"):
+                try:
+                    _sps.set_alert_config(_new_acfg)
+                    st.success("Saved — watched by this tab (60s) and the 24/7 cron "
+                               "(~every 20 min), one Slack per crossing. Empty box = "
+                               "that side not watched.")
+                except Exception as _sae:
+                    st.error(f"Save failed: {_sae}")
+            st.caption("Alert fires once when **Now** crosses a level and re-arms only "
+                       "after it comes back inside the band. Uses the same Slack "
+                       "token/channel as the SILVERMIC tab.")
+
+        # Check crossings on every 60s fragment run (shared dedup with the cron).
+        try:
+            _sa_events = _sps.check_spread_alerts(_spreads)
+        except Exception:
+            _sa_events = []
+        if _sa_events:
+            _sa_cfg  = st.session_state.get("sm_cfg") or _sm_config_load()
+            _sa_bot  = _sa_cfg.get("slack_bot_token", "")
+            _sa_chan = _sa_cfg.get("slack_channel", "") or "#general"
+            from notifier import send_slack_text as _sa_send
+            for _ev in _sa_events:
+                _sa_txt = _sps.alert_text(_ev)
+                if _sa_bot and _sa_send(_sa_bot, _sa_chan, _sa_txt):
+                    st.success(f"🔔 Slack sent → {_sa_txt}")
+                else:
+                    st.warning(f"🔔 Crossed but Slack NOT sent (check token/channel): {_sa_txt}")
     else:
         # Market closed, or Fyers returned nothing → show persisted all-time min/max.
         _rows = []

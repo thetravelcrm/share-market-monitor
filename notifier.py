@@ -15,6 +15,29 @@ _SLACK_API = "https://slack.com/api/chat.postMessage"
 LAST_ERROR: str = ""
 
 
+def send_slack_text(bot_token: str, channel: str, text: str) -> bool:
+    """Post a plain-text Slack message (generic alerts, e.g. spread thresholds)."""
+    global LAST_ERROR
+    if not bot_token or not bot_token.startswith("xoxb-"):
+        LAST_ERROR = "bad_token_format"
+        logger.warning("Invalid Slack bot token — text alert skipped")
+        return False
+    try:
+        resp = requests.post(_SLACK_API, headers={"Authorization": f"Bearer {bot_token}"},
+                             json={"channel": channel, "text": text}, timeout=10)
+        data = resp.json()
+        if data.get("ok"):
+            LAST_ERROR = ""
+            return True
+        LAST_ERROR = data.get("error", "unknown")
+        logger.warning("Slack text alert failed: %s", LAST_ERROR)
+        return False
+    except Exception as e:
+        LAST_ERROR = f"exception: {e}"
+        logger.warning("Slack text alert exception: %s", e)
+        return False
+
+
 def send_slack_alert(bot_token: str, channel: str, payload: dict) -> bool:
     """
     Post a formatted Slack message using a Bot OAuth Token.

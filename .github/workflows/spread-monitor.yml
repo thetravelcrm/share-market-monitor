@@ -36,4 +36,7 @@ jobs:
           # ── Shared spread state (same gist the app uses) ──
           GIST_TOKEN:         ${{ secrets.GIST_TOKEN }}
           MONITOR_STATE_GIST: ${{ secrets.MONITOR_STATE_GIST }}
+          # ── Slack (spread threshold alerts) ──
+          SLACK_BOT_TOKEN:    ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL:      ${{ secrets.SLACK_CHANNEL }}
         run: python spread_monitor.py

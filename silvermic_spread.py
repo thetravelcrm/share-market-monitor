@@ -257,21 +257,93 @@ def last_sample_info() -> dict:
     return _load_state().get("_meta") or {}
 
 
+# ─────────────────────────────────────────────────────────────
+#  Threshold alerts — per pair High/Low, once per crossing.
+#  Config AND fired-flags live in the shared gist state, so the app (60s) and the
+#  24/7 cron (~20 min) watch the same levels and never double-alert.
+# ─────────────────────────────────────────────────────────────
+
+def get_alert_config() -> dict:
+    """{pair_key: {"high": float|None, "low": float|None, fired_…}}."""
+    return _load_state().get("_alerts") or {}
+
+
+def set_alert_config(cfg: dict) -> None:
+    """Save per-pair thresholds {key: {"high":…, "low":…}} (None = side not watched).
+    A pair whose levels changed gets its fired flags reset so new levels re-arm."""
+    state = _load_state()
+    alerts = state.get("_alerts") or {}
+    for key, c in cfg.items():
+        prev = alerts.get(key) or {}
+        entry = {**prev, "high": c.get("high"), "low": c.get("low")}
+        if prev.get("high") != c.get("high") or prev.get("low") != c.get("low"):
+            entry["fired_high"] = False
+            entry["fired_low"]  = False
+        alerts[key] = entry
+    state["_alerts"] = alerts
+    _save_state(state)
+
+
+def check_spread_alerts(spreads: list[dict]) -> list[dict]:
+    """Compare live spreads to the saved thresholds. Fires ONCE per crossing: a side
+    that fired re-arms only after the spread comes back inside the band. Fired flags
+    are persisted immediately (before the Slack send), so a failed send is reported
+    by the caller rather than retried into spam.
+    Returns [{label, side: 'HIGH'|'LOW', level, value}] for sides that just crossed."""
+    state = _load_state()
+    alerts = state.get("_alerts") or {}
+    if not alerts:
+        return []
+    events, dirty = [], False
+    for sp in spreads:
+        c = alerts.get(sp["key"])
+        if not c:
+            continue
+        val = sp["spread"]
+        hi, lo = c.get("high"), c.get("low")
+        if hi is not None:
+            if val >= hi and not c.get("fired_high"):
+                c["fired_high"] = True; dirty = True
+                events.append({"label": sp["label"], "side": "HIGH", "level": hi, "value": val})
+            elif val < hi and c.get("fired_high"):
+                c["fired_high"] = False; dirty = True      # back inside → re-armed
+        if lo is not None:
+            if val <= lo and not c.get("fired_low"):
+                c["fired_low"] = True; dirty = True
+                events.append({"label": sp["label"], "side": "LOW", "level": lo, "value": val})
+            elif val > lo and c.get("fired_low"):
+                c["fired_low"] = False; dirty = True
+    if dirty:
+        state["_alerts"] = alerts
+        _save_state(state)
+    return events
+
+
+def alert_text(ev: dict) -> str:
+    """Slack message for a crossing event (shared by app + cron)."""
+    dirn = "ABOVE" if ev["side"] == "HIGH" else "BELOW"
+    hint = ("RICH — idea: SHORT spread (sell far · buy near)" if ev["side"] == "HIGH"
+            else "CHEAP — idea: LONG spread (buy far · sell near)")
+    return (f"📐 SPREAD ALERT — SILVERMIC {ev['label']}: ₹{ev['value']:,.0f} crossed "
+            f"{dirn} your ₹{ev['level']:,.0f} · {hint}")
+
+
 def persisted_minmax() -> dict:
     """Read the stored all-time min/max (for display when the market is closed)."""
     return _load_state()
 
 
-def cron_sample(token: str, hist_days: int = 2) -> int:
+def cron_sample(token: str, hist_days: int = 2) -> list[dict]:
     """
     Headless sampler for the 24/7 cron: folds the live spread AND recent intraday
     history into the persisted all-time min/max (so extremes between cron runs are
-    captured from the history bars). Returns the number of pairs updated.
+    captured from the history bars). Returns the sampled spreads (empty when none),
+    so the caller can run the threshold-alert check on them.
     """
     contracts = tradeable_contracts(token)
     spreads = pairwise_spreads(contracts)
     if not spreads:
-        return 0
+        return []
     state = _load_state()
     now_iso = datetime.now(timezone.utc).isoformat()
     for sp in spreads:
@@ -289,7 +361,7 @@ def cron_sample(token: str, hist_days: int = 2) -> int:
         state[sp["key"]] = rec
     _stamp_meta(state, "cron")
     _save_state(state)
-    return len(spreads)
+    return spreads
 
 
 # ─────────────────────────────────────────────────────────────
