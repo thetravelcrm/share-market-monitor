@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.78"
-_APP_BUILD   = "14 Jul 2026 21:00"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.79"
+_APP_BUILD   = "14 Jul 2026 22:07"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3579,14 +3579,15 @@ def _render_spreads(token: str):
             if st.button("💾 Save alert levels", key="sa_save"):
                 try:
                     _sps.set_alert_config(_new_acfg)
-                    st.success("Saved — watched by this tab (60s) and the 24/7 cron "
-                               "(~every 20 min), one Slack per crossing. Empty box = "
-                               "that side not watched.")
+                    st.success("Saved — watched by the 5-second cloud watcher (24/7, no "
+                               "browser needed) and this tab (60s), one Slack per "
+                               "crossing. Empty box = that side not watched.")
                 except Exception as _sae:
                     st.error(f"Save failed: {_sae}")
             st.caption("Alert fires once when **Now** crosses a level and re-arms only "
-                       "after it comes back inside the band. Uses the same Slack "
-                       "token/channel as the SILVERMIC tab.")
+                       "after it comes back inside the band. The cloud watcher samples "
+                       "every ~5s during MCX hours, so even a seconds-long spike is "
+                       "caught. Uses the same Slack token/channel as the SILVERMIC tab.")
 
         # Check crossings on every 60s fragment run (shared dedup with the cron).
         try:

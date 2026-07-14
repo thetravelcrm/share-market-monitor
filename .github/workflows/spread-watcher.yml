@@ -1,0 +1,45 @@
+name: SILVERMIC Spread Watcher (5s)
+
+# GitHub cron can't fire every few seconds, so each run IS a ~75-minute loop that
+# samples the spreads every ~5s (spread_watcher.py) and Slack-alerts within seconds
+# of a threshold crossing. Scheduled every 30 min with a no-cancel concurrency group:
+# while one run is looping, the next schedules queue behind it and start the moment
+# it exits — a continuous chain across MCX hours. spread-monitor (20 min) stays as
+# the gap-healer for the all-time min/max via its history fold.
+
+on:
+  schedule:
+    - cron: "0,30 3-18 * * 1-5"   # every 30 min, 03:00-18:59 UTC, weekdays
+  workflow_dispatch: {}
+
+concurrency:
+  group: spread-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Watch spreads (5s loop)
+        env:
+          # ── Fyers (required) ──
+          FYERS_CLIENT_ID:    ${{ secrets.FYERS_CLIENT_ID }}
+          FYERS_SECRET_KEY:   ${{ secrets.FYERS_SECRET_KEY }}
+          FYERS_ID:           ${{ secrets.FYERS_ID }}
+          FYERS_TOTP_SECRET:  ${{ secrets.FYERS_TOTP_SECRET }}
+          FYERS_PIN:          ${{ secrets.FYERS_PIN }}
+          # ── Shared spread state (same gist the app uses) ──
+          GIST_TOKEN:         ${{ secrets.GIST_TOKEN }}
+          MONITOR_STATE_GIST: ${{ secrets.MONITOR_STATE_GIST }}
+          # ── Slack (spread threshold alerts) ──
+          SLACK_BOT_TOKEN:    ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL:      ${{ secrets.SLACK_CHANNEL }}
+        run: python spread_watcher.py --minutes 75

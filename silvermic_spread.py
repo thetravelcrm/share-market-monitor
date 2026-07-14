@@ -319,6 +319,24 @@ def check_spread_alerts(spreads: list[dict]) -> list[dict]:
     return events
 
 
+def watcher_persist(pending: dict) -> None:
+    """Fold locally-accumulated extremes {key: {label, min:(v,ts), max:(v,ts)}} into
+    the persisted record in ONE gist write. spread_watcher samples every ~5s but
+    calls this only every few minutes, so the gist API isn't hammered."""
+    if not pending:
+        return
+    state = _load_state()
+    for key, p in pending.items():
+        rec = state.get(key) or {}
+        rec["label"] = p["label"]
+        for v, ts in (p["min"], p["max"]):
+            _fold(rec, v, ts)
+            _fold_today(rec, v, ts)
+        state[key] = rec
+    _stamp_meta(state, "watch")
+    _save_state(state)
+
+
 def alert_text(ev: dict) -> str:
     """Slack message for a crossing event (shared by app + cron)."""
     dirn = "ABOVE" if ev["side"] == "HIGH" else "BELOW"
