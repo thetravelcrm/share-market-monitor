@@ -189,6 +189,9 @@ def spread_history_daily(token: str, near_hist: str, far_hist: str,
         d_from = (now - timedelta(days=days + 3)).strftime("%Y-%m-%d")
         d_to   = now.strftime("%Y-%m-%d")
 
+        import logging
+        _log = logging.getLogger("silvermic_spread")
+
         def _fetch_retry(sym):
             # One retry after a short pause — a fragment run fires several Fyers
             # calls back-to-back and a single leg can transiently return no bars.
@@ -196,12 +199,17 @@ def spread_history_daily(token: str, near_hist: str, far_hist: str,
             if df is None or df.empty:
                 _t.sleep(1.0)
                 df = _fetch_one(sym, token, "15", d_from, d_to)
+            if df is None or df.empty:
+                _log.warning("spread_history_daily: %s returned no 15m bars (%s..%s)",
+                             sym, d_from, d_to)
             return df
 
         n = _fetch_retry(near_hist)
         f = _fetch_retry(far_hist)
         if n is None or f is None or n.empty or f.empty:
             return []
+        _log.info("spread_history_daily: %s=%d bars, %s=%d bars",
+                  near_hist, len(n), far_hist, len(f))
         sp = (f["Close"] - n["Close"]).dropna()          # aligns on shared bars
         if sp.empty:
             return []
