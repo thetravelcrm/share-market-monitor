@@ -406,6 +406,56 @@ _SILVER_SYSTEM = (
 )
 
 
+_SPREAD_SYSTEM = (
+    "You are a skeptical MCX calendar-spread analyst — the FINAL gate before a "
+    "SILVERMIC mean-reversion spread trade (LONG spread = buy far/sell near when the "
+    "gap is cheap; SHORT spread = sell far/buy near when rich). Use ONLY the JSON "
+    "facts provided; never invent prices, levels or history.\n"
+    "Judge whether trading this spread NOW is justified. Check specifically:\n"
+    "1. BAND QUALITY — how old/deep is the min-max band (extreme timestamps, history "
+    "days)? A band built from a few days is unreliable; mean reversion needs an "
+    "established range. 2. POSITION — is the spread genuinely at an extreme "
+    "(<=25% or >=75%), not mid-band? 3. COST — the cost_vs_edge ratio must be >=3 for "
+    "full size (1.5-3 = half size at best; below = no trade regardless of signal). "
+    "4. REGIME — do daily history stats show a drifting/trending midpoint (carry or "
+    "rate shifts)? Trends punish reversion trades. 5. EXPIRY — a near leg close to "
+    "expiry adds roll/delivery risk. 6. EXISTING POSITION — adding to or conflicting "
+    "with an open spread position changes the risk.\n"
+    "Default to CAUTION or AVOID when data is thin or checks conflict — a missed "
+    "trade costs nothing; a bad spread trade pays double friction.\n"
+    "Respond EXACTLY:\n"
+    "VERDICT: CONFIRM|CAUTION|AVOID\n"
+    "AI_CONFIDENCE: <integer 0-100>\n"
+    "- <reason citing a specific data point>\n"
+    "- <reason>\n"
+)
+
+
+def analyze_spread(facts: dict, use_cache: bool = True) -> AIVerdict:
+    """
+    Deep (pro + thinking) verdict on a SILVERMIC calendar-spread trade.
+    `facts` is a plain dict (pair, now, band, cost_vs_edge, history, position…)
+    built by the caller from live data — nothing is invented here.
+    """
+    if not is_configured():
+        return AIVerdict("ERROR", 0, [], "DeepSeek not configured.", ok=False)
+
+    blob = json.dumps(facts, default=str, indent=2)
+    ckey = "spread:" + str(hash(blob))
+    if use_cache and ckey in _cache:
+        return _cache[ckey]
+
+    ok, text = _call(_SPREAD_SYSTEM,
+                     "Proposed SILVERMIC calendar-spread trade:\n\n" + blob,
+                     max_tokens=450)
+    if not ok:
+        return AIVerdict("ERROR", 0, [], text, ok=False)
+    verdict = _parse_verdict(text, default_verdict="CAUTION")
+    if use_cache:
+        _cache[ckey] = verdict
+    return verdict
+
+
 def analyze_silvermic(sm: dict, use_cache: bool = True) -> AIVerdict:
     """
     AI verdict on the SILVERMIC live signal.

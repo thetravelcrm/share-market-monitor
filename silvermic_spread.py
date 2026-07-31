@@ -176,6 +176,36 @@ def pairwise_spreads(contracts: list[dict]) -> list[dict]:
     return spreads
 
 
+def spread_history_daily(token: str, near_hist: str, far_hist: str,
+                         days: int = 7) -> list[dict]:
+    """Daily spread stats [{date, min, max, last}] from 15m history of both legs
+    (inner-aligned on bar timestamp). Real data for the AI band-quality check —
+    empty list when history is unavailable."""
+    try:
+        import pandas as pd
+        from silvermic_continuous import _fetch_one
+        now = datetime.now(timezone.utc)
+        d_from = (now - timedelta(days=days + 3)).strftime("%Y-%m-%d")
+        d_to   = now.strftime("%Y-%m-%d")
+        n = _fetch_one(near_hist, token, "15", d_from, d_to)
+        f = _fetch_one(far_hist,  token, "15", d_from, d_to)
+        if n is None or f is None or n.empty or f.empty:
+            return []
+        sp = (f["Close"] - n["Close"]).dropna()          # aligns on shared bars
+        if sp.empty:
+            return []
+        ist_dates = (sp.index + pd.Timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+        df = pd.DataFrame({"spread": sp.values, "date": ist_dates})
+        out = [{"date": d,
+                "min":  round(float(g["spread"].min())),
+                "max":  round(float(g["spread"].max())),
+                "last": round(float(g["spread"].iloc[-1]))}
+               for d, g in df.groupby("date", sort=True)]
+        return out[-days:]
+    except Exception:
+        return []
+
+
 # Estimated statutory + brokerage cost per lot-pair ROUND TRIP (Zerodha ₹20 × 4
 # orders + CTT on the two sells + exchange/txn charges + GST at SILVERMIC notionals
 # ≈ ₹220k/leg). An estimate, not a quote — refine against your contract notes.

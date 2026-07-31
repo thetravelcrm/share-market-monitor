@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.82"
-_APP_BUILD   = "31 Jul 2026 22:49"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.83"
+_APP_BUILD   = "31 Jul 2026 23:03"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3600,6 +3600,61 @@ def _render_spreads(token: str):
                    "high → rich (bias SHORT it). **Cost vs Edge** = expected capture (distance "
                    "to band mid) ÷ full round-trip cost (both legs' live bid-ask width + "
                    "~₹130 est. charges): ✅ ≥3× take it · ⚠️ 1.5–3× half size · ❌ <1.5× skip.")
+
+        # ── 🔬 DeepSeek Pro final gate on a spread trade (on demand — Pro is slow) ──
+        _sp_dsa = None
+        try:
+            import deepseek_analyzer as _sp_dsa_mod
+            if _sp_dsa_mod.is_configured():
+                _sp_dsa = _sp_dsa_mod
+        except Exception:
+            pass
+        if _sp_dsa and _spreads:
+            _aic1, _aic2 = st.columns([2, 1])
+            _sp_ai_pair = _aic1.selectbox(
+                "Pair for AI verdict", [s["label"] for s in _spreads], key="sp_ai_pair")
+            if _aic2.button("🔬 AI Spread Verdict (Pro)", key="sp_ai_btn",
+                            help="DeepSeek Pro (reasoning) analyses the band history, "
+                                 "cost vs edge and your position before you trade"):
+                _sel = next(s for s in _spreads if s["label"] == _sp_ai_pair)
+                _rec5 = _minmax.get(_sel["key"], {})
+                _mn5, _mx5 = _rec5.get("min", {}), _rec5.get("max", {})
+                _mnv5, _mxv5 = _mn5.get("value"), _mx5.get("value")
+                _wc5 = _sps.trade_worth_check(_sel["spread"], _sel.get("book_cost"),
+                                              _mnv5, _mxv5)
+                _pos5 = (round((_sel["spread"] - _mnv5) / (_mxv5 - _mnv5) * 100)
+                         if _mnv5 is not None and _mxv5 is not None and _mxv5 > _mnv5
+                         else None)
+                _near_c = next((c for c in _contracts
+                                if c["label"] == _sel["near_label"]), {})
+                with st.spinner("Fetching 7-day spread history + DeepSeek Pro thinking…"):
+                    _hist7 = _sps.spread_history_daily(
+                        token, _sel["near_hist"], _sel["far_hist"], days=7)
+                    _mypos5 = "none"
+                    try:
+                        from fyers_fetcher import get_positions as _gp5
+                        _pd5 = _gp5(token)
+                        if _pd5:
+                            _m5 = [p for p in _sps.detect_position_spreads(_pd5["positions"])
+                                   if p["label"].replace(" ", "") == _sel["label"].replace(" ", "")]
+                            if _m5:
+                                _mypos5 = _m5
+                    except Exception:
+                        pass
+                    _sp_facts = {
+                        "pair":                   _sel["label"],
+                        "spread_now_inr_per_kg":  _sel["spread"],
+                        "near_leg_days_to_expiry": _near_c.get("dte"),
+                        "band": {"all_time_min": _mnv5, "min_at": _mn5.get("ts"),
+                                 "all_time_max": _mxv5, "max_at": _mx5.get("ts"),
+                                 "position_pct": _pos5,
+                                 "today_session": _rec5.get("today")},
+                        "cost_vs_edge":           _wc5,
+                        "daily_history_7d":       _hist7 or "unavailable",
+                        "my_open_position_this_pair": _mypos5,
+                    }
+                    st.session_state["sp_ai_res"] = _sp_dsa.analyze_spread(_sp_facts)
+            _render_ai_verdict(st.session_state.get("sp_ai_res"), label="DeepSeek 🔬 Pro")
         with st.expander("🕒 When the min / max occurred"):
             st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
 
