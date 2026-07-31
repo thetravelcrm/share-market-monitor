@@ -144,6 +144,9 @@ def tradeable_contracts(token: str, min_days: int = _TRADEABLE_MIN_DAYS) -> list
         price = q["last_price"] if (q and q["last_price"] > 0) else _last_price_from_history(token, c["hist_sym"])
         if price and price > 0:
             c["price"] = round(price, 2)
+            # live book (0 when unavailable, e.g. history-fallback pricing)
+            c["bid"] = float(q.get("bid", 0) or 0) if q else 0.0
+            c["ask"] = float(q.get("ask", 0) or 0) if q else 0.0
             out.append(c)
     out.sort(key=lambda c: c["expiry"])
     return out
@@ -155,7 +158,7 @@ def pairwise_spreads(contracts: list[dict]) -> list[dict]:
     for i in range(len(contracts)):
         for j in range(i + 1, len(contracts)):
             near, far = contracts[i], contracts[j]    # sorted by expiry → i is nearer
-            spreads.append({
+            sp = {
                 "key":        f"{near['quote_sym']}|{far['quote_sym']}",
                 "label":      f"{far['label']} − {near['label']}",
                 "near_label": near["label"],
@@ -163,8 +166,45 @@ def pairwise_spreads(contracts: list[dict]) -> list[dict]:
                 "near_hist":  near["hist_sym"],
                 "far_hist":   far["hist_sym"],
                 "spread":     round(far["price"] - near["price"], 2),
-            })
+            }
+            # Round-trip BOOK cost of trading this spread (enter + exit both legs at
+            # the touch) = full bid-ask width of each leg. 0/absent when book unknown.
+            if all(near.get(k, 0) > 0 for k in ("bid", "ask")) and \
+               all(far.get(k, 0) > 0 for k in ("bid", "ask")):
+                sp["book_cost"] = round((far["ask"] - far["bid"]) + (near["ask"] - near["bid"]), 2)
+            spreads.append(sp)
     return spreads
+
+
+# Estimated statutory + brokerage cost per lot-pair ROUND TRIP (Zerodha ₹20 × 4
+# orders + CTT on the two sells + exchange/txn charges + GST at SILVERMIC notionals
+# ≈ ₹220k/leg). An estimate, not a quote — refine against your contract notes.
+EST_CHARGES_RT = 130.0
+
+
+def trade_worth_check(spread_now: float, book_cost: float | None,
+                      band_min: float | None, band_max: float | None) -> dict:
+    """Is a mean-reversion trade on this pair worth its friction RIGHT NOW?
+
+    Expected capture = distance from the current spread to the band midpoint (the
+    mean-reversion target). Total round-trip cost = live book cost + EST_CHARGES_RT.
+    Rule of thumb: take the trade only when capture ≥ 3× cost.
+
+    Returns {edge, cost, ratio, verdict: 'GOOD'|'THIN'|'NO_EDGE'|'UNKNOWN'}."""
+    if book_cost is None or band_min is None or band_max is None or band_max <= band_min:
+        return {"verdict": "UNKNOWN"}
+    cost = book_cost + EST_CHARGES_RT
+    mid  = (band_min + band_max) / 2
+    edge = abs(spread_now - mid)
+    ratio = edge / cost if cost > 0 else 0.0
+    if ratio >= 3.0:
+        verdict = "GOOD"
+    elif ratio >= 1.5:
+        verdict = "THIN"
+    else:
+        verdict = "NO_EDGE"
+    return {"edge": round(edge, 2), "cost": round(cost, 2),
+            "ratio": round(ratio, 1), "verdict": verdict}
 
 
 # ─────────────────────────────────────────────────────────────

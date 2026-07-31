@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.81"
-_APP_BUILD   = "31 Jul 2026 22:33"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.82"
+_APP_BUILD   = "31 Jul 2026 22:49"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3551,6 +3551,21 @@ def _render_spreads(token: str):
             _td = _rec.get("today") or {}
             _today_txt = (f"{_td['min']:,.0f} – {_td['max']:,.0f}"
                           if _td.get("min") is not None and _td.get("max") is not None else "—")
+            # Friction check: does the expected reversion clear the real trading cost?
+            _wc = _sps.trade_worth_check(_cur, _sp.get("book_cost"), _mnv, _mxv)
+            if _wc["verdict"] == "UNKNOWN":
+                _cost_txt = "— book unknown"
+            else:
+                _cost_txt = {
+                    "GOOD":    f"✅ {_wc['ratio']}× — edge ₹{_wc['edge']:,.0f} / cost ₹{_wc['cost']:,.0f}",
+                    "THIN":    f"⚠️ {_wc['ratio']}× — edge ₹{_wc['edge']:,.0f} / cost ₹{_wc['cost']:,.0f}",
+                    "NO_EDGE": f"❌ {_wc['ratio']}× — edge ₹{_wc['edge']:,.0f} / cost ₹{_wc['cost']:,.0f}",
+                }[_wc["verdict"]]
+                # An idea that can't pay its own friction isn't an idea.
+                if _wc["verdict"] == "NO_EDGE" and _idea.startswith(("🟢", "🔴")):
+                    _idea = "⚪ Signal, but edge < cost — skip"
+                elif _wc["verdict"] == "THIN" and _idea.startswith(("🟢", "🔴")):
+                    _idea += " (thin edge — half size)"
             _rows.append({
                 "Pair":      _sp["label"],
                 "Now (₹)":   _cur,
@@ -3559,6 +3574,7 @@ def _render_spreads(token: str):
                 "Max (₹)":   _mxv if _mxv is not None else "—",
                 "Range (₹)": round(_rng) if _rng else "—",
                 "Position":  _read,
+                "Cost vs Edge": _cost_txt,
                 "Mean-Reversion Idea": _idea,
             })
             _ts_rows.append({
@@ -3581,7 +3597,9 @@ def _render_spreads(token: str):
         st.caption("**Now** = live far−near spread. SILVERMIC = 1 kg/lot, so ₹/kg here is also "
                    "your **₹ P&L per lot pair**. **Position** = where Now sits in its stored "
                    "min–max band (0%=at min, 100%=at max): low → spread is cheap (bias LONG it), "
-                   "high → rich (bias SHORT it).")
+                   "high → rich (bias SHORT it). **Cost vs Edge** = expected capture (distance "
+                   "to band mid) ÷ full round-trip cost (both legs' live bid-ask width + "
+                   "~₹130 est. charges): ✅ ≥3× take it · ⚠️ 1.5–3× half size · ❌ <1.5× skip.")
         with st.expander("🕒 When the min / max occurred"):
             st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
 
