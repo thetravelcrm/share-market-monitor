@@ -33,6 +33,7 @@ SAMPLE_SECS            = 5      # target sampling cadence
 CONTRACTS_REFRESH_SECS = 600    # tradeable-contract list refresh (rolls are slow)
 CONFIG_REFRESH_SECS    = 60     # alert-levels refresh from the gist
 PERSIST_SECS           = 300    # min/max fold -> gist (one write)
+PNL_CHECK_SECS         = 30     # live-position P&L alert cadence
 
 
 def _maybe_crossing(spreads: list[dict], cfg: dict) -> bool:
@@ -83,8 +84,9 @@ def main() -> int:
     syms: list[str] = []
     cfg: dict = {}
     pending: dict = {}          # key -> {label, min:(v,ts), max:(v,ts)}
-    t_contracts = t_config = t_persist = 0.0
+    t_contracts = t_config = t_persist = t_pnl = 0.0
     samples = alerts_sent = 0
+    from fyers_fetcher import get_positions
 
     while time.time() < deadline:
         tick_t0 = time.time()
@@ -147,6 +149,23 @@ def main() -> int:
                             log.error("ALERT Slack send failed: %s", txt)
                 except Exception as e:
                     log.warning("alert check failed: %s", e)
+
+        # ── Live-position P&L alerts (~every 30s; same once-per-crossing dedup) ──
+        if time.time() - t_pnl > PNL_CHECK_SECS:
+            t_pnl = time.time()
+            try:
+                if sps.get_pnl_alert():                 # only when levels are set
+                    posd = get_positions(token)
+                    if posd is not None:
+                        for ev in sps.check_pnl_alert(posd["total_pl"]):
+                            txt = sps.pnl_alert_text(ev)
+                            if bot and send_slack_text(bot, chan, txt):
+                                alerts_sent += 1
+                                log.info("P&L ALERT sent: %s", txt)
+                            else:
+                                log.error("P&L ALERT Slack send failed: %s", txt)
+            except Exception as e:
+                log.warning("pnl check failed: %s", e)
 
         if pending and (time.time() - t_persist > PERSIST_SECS):
             try:

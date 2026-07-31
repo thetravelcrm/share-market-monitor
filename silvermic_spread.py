@@ -15,6 +15,7 @@ from __future__ import annotations
 import calendar
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date
 
@@ -317,6 +318,115 @@ def check_spread_alerts(spreads: list[dict]) -> list[dict]:
         state["_alerts"] = alerts
         _save_state(state)
     return events
+
+
+# ─────────────────────────────────────────────────────────────
+#  Live Fyers positions → spread pairs + P&L alerts
+# ─────────────────────────────────────────────────────────────
+
+_FUT_RE = re.compile(r"MCX:([A-Z]+?)(\d\d)([A-Z]{3})FUT$")
+_MON_NUM = {m.upper(): i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+
+def contract_label(symbol: str) -> str:
+    """'MCX:SILVERMIC27FEBFUT' -> 'Feb-27' (unknown formats pass through)."""
+    m = _FUT_RE.match(symbol or "")
+    return f"{m.group(3).title()}-{m.group(2)}" if m else (symbol or "")
+
+
+def _sym_order(symbol: str) -> tuple:
+    """Sortable (year, month) of an MCX FUT symbol; far month sorts later."""
+    m = _FUT_RE.match(symbol or "")
+    if not m:
+        return (99, 99)
+    return (int(m.group(2)), _MON_NUM.get(m.group(3), 99))
+
+
+def detect_position_spreads(positions: list[dict]) -> list[dict]:
+    """Find SILVERMIC calendar-spread pairs among live positions: a LONG and a SHORT
+    SILVERMIC FUT held together. Returns [{label, side, lots, entry_spread,
+    live_spread, pnl}] — side is the SPREAD's side (LONG spread = long the far leg).
+    SILVERMIC = 1 kg/lot, so spread ₹/kg × lots = ₹ P&L."""
+    sil = [p for p in positions
+           if _FUT_RE.match(p.get("symbol", "")) and "SILVERMIC" in p.get("symbol", "")
+           and p.get("net_qty")]
+    longs  = sorted([p for p in sil if p["net_qty"] > 0], key=lambda p: _sym_order(p["symbol"]))
+    shorts = sorted([p for p in sil if p["net_qty"] < 0], key=lambda p: _sym_order(p["symbol"]))
+    pairs = []
+    for lp in longs:
+        for sp in shorts:
+            lots = min(lp["net_qty"], -sp["net_qty"])
+            if lots <= 0:
+                continue
+            near, far = sorted([lp, sp], key=lambda p: _sym_order(p["symbol"]))
+            if near["symbol"] == far["symbol"]:
+                continue
+            entry = far["avg"] - near["avg"]
+            live  = far["ltp"] - near["ltp"]
+            long_spread = far["net_qty"] > 0          # long far leg == LONG the spread
+            pnl = (live - entry if long_spread else entry - live) * lots
+            pairs.append({
+                "label":        f"{contract_label(far['symbol'])} − {contract_label(near['symbol'])}",
+                "side":         "LONG" if long_spread else "SHORT",
+                "lots":         lots,
+                "entry_spread": round(entry, 2),
+                "live_spread":  round(live, 2),
+                "pnl":          round(pnl, 2),
+            })
+    return pairs
+
+
+def get_pnl_alert() -> dict:
+    """{'profit': float|None, 'loss': float|None, fired flags} — loss stored positive."""
+    return _load_state().get("_pnl") or {}
+
+
+def set_pnl_alert(profit, loss) -> None:
+    """Save total-P&L alert levels (None = side off). Changed levels re-arm."""
+    state = _load_state()
+    prev = state.get("_pnl") or {}
+    entry = {**prev, "profit": profit, "loss": loss}
+    if prev.get("profit") != profit or prev.get("loss") != loss:
+        entry["fired_profit"] = False
+        entry["fired_loss"]   = False
+    state["_pnl"] = entry
+    _save_state(state)
+
+
+def check_pnl_alert(total_pl: float) -> list[dict]:
+    """Once-per-crossing check of total live P&L vs the saved levels (same semantics
+    as the spread alerts; flags persist in the shared gist for app/watcher dedup)."""
+    state = _load_state()
+    c = state.get("_pnl")
+    if not c:
+        return []
+    events, dirty = [], False
+    profit, loss = c.get("profit"), c.get("loss")
+    if profit is not None:
+        if total_pl >= profit and not c.get("fired_profit"):
+            c["fired_profit"] = True; dirty = True
+            events.append({"side": "PROFIT", "level": profit, "value": total_pl})
+        elif total_pl < profit and c.get("fired_profit"):
+            c["fired_profit"] = False; dirty = True
+    if loss is not None:
+        if total_pl <= -loss and not c.get("fired_loss"):
+            c["fired_loss"] = True; dirty = True
+            events.append({"side": "LOSS", "level": -loss, "value": total_pl})
+        elif total_pl > -loss and c.get("fired_loss"):
+            c["fired_loss"] = False; dirty = True
+    if dirty:
+        state["_pnl"] = c
+        _save_state(state)
+    return events
+
+
+def pnl_alert_text(ev: dict) -> str:
+    if ev["side"] == "PROFIT":
+        return (f"💰 P&L ALERT — your live Fyers positions are up ₹{ev['value']:,.0f} "
+                f"(target ₹{ev['level']:,.0f} hit). Consider booking/trailing.")
+    return (f"🛑 P&L ALERT — your live Fyers positions are down ₹{abs(ev['value']):,.0f} "
+            f"(limit ₹{abs(ev['level']):,.0f} hit). Check your stop discipline.")
 
 
 def watcher_persist(pending: dict) -> None:

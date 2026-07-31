@@ -96,6 +96,41 @@ def get_fyers_model(access_token: str):
     )
 
 
+def get_positions(access_token: str) -> Optional[dict]:
+    """
+    Live open positions from Fyers (read-only). Returns
+        {"positions": [{symbol, side, net_qty, avg, ltp, pl, product}, …],
+         "total_pl": float}
+    or None on any error (callers degrade gracefully).
+    """
+    try:
+        fyers = get_fyers_model(access_token)
+        resp = fyers.positions()
+        if resp.get("s") != "ok" and resp.get("code") != 200:
+            return None
+        out = []
+        for p in resp.get("netPositions", []) or []:
+            try:
+                qty = int(p.get("netQty", 0) or 0)
+            except Exception:
+                qty = 0
+            out.append({
+                "symbol":  p.get("symbol", ""),
+                "side":    "LONG" if qty > 0 else ("SHORT" if qty < 0 else "FLAT"),
+                "net_qty": qty,
+                "avg":     float(p.get("netAvg", 0) or 0),
+                "ltp":     float(p.get("ltp", 0) or 0),
+                "pl":      float(p.get("pl", 0) or 0),
+                "product": p.get("productType", ""),
+            })
+        total = (resp.get("overall") or {}).get("pl_total")
+        if total is None:
+            total = sum(x["pl"] for x in out)
+        return {"positions": out, "total_pl": float(total)}
+    except Exception:
+        return None
+
+
 def is_auto_login_configured() -> bool:
     """True if FYERS_ID, TOTP secret + PIN are present (Streamlit secrets or env)."""
     return bool(

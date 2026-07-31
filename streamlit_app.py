@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.79"
-_APP_BUILD   = "14 Jul 2026 22:07"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.80"
+_APP_BUILD   = "31 Jul 2026 22:20"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3258,6 +3258,39 @@ with tab_silvermic:
                     unsafe_allow_html=True,
                 )
 
+            # ── Reality check: tracked trade vs your ACTUAL Fyers positions ──
+            try:
+                from fyers_fetcher import get_positions as _fy_pos_sync
+                import silvermic_spread as _sps_sync
+                _pd_sync = _fy_pos_sync(_sm_token)
+                if _pd_sync is not None:
+                    _sil_long = [p for p in _pd_sync["positions"]
+                                 if "SILVERMIC" in p.get("symbol", "") and p["net_qty"] > 0]
+                    _tracked = st.session_state.get("sm_active_trade", {}).get("active")
+                    if _tracked and not _sil_long:
+                        st.warning("⚠️ Fyers shows **no live SILVERMIC long** — the tracked "
+                                   "trade above may be stale (exited on the broker, or "
+                                   "never actually taken).")
+                        if st.button("🧹 Clear tracked trade (sync with Fyers)",
+                                     key="sm_sync_clear"):
+                            _sm_trade_save(dict(_SM_TRADE_DEFAULT))
+                            st.session_state["sm_active_trade"] = dict(_SM_TRADE_DEFAULT)
+                            st.session_state["sm_prev_signal"]  = "WAIT"
+                            st.rerun()
+                    elif _sil_long and not _tracked:
+                        _p0 = _sil_long[0]
+                        st.info(f"💼 Fyers shows a live SILVERMIC long not tracked here: "
+                                f"{_sps_sync.contract_label(_p0['symbol'])} × {_p0['net_qty']} "
+                                f"@ ₹{_p0['avg']:,.0f} · P&L ₹{_p0['pl']:,.0f}. Use "
+                                f"'Record Trade Entry' above to track its exits.")
+                    elif _sil_long:
+                        _p0 = _sil_long[0]
+                        st.caption(f"✅ Matches Fyers: LONG {_p0['net_qty']} "
+                                   f"{_sps_sync.contract_label(_p0['symbol'])} @ "
+                                   f"₹{_p0['avg']:,.0f} · live P&L ₹{_p0['pl']:,.0f}")
+            except Exception:
+                pass
+
             # ── Section 2.5: News Confirmation Panel ─────────────────
             st.markdown("#### 🧠 News Confirmation")
             _nv = _sm_result.news_verdict
@@ -3576,9 +3609,23 @@ def _render_spreads(token: str):
                                        value=("" if _c.get("low") is None else f"{_c['low']:g}"),
                                        placeholder="e.g. 6000")
                 _new_acfg[_sp["key"]] = {"high": _sa_parse(_hv), "low": _sa_parse(_lv)}
+            st.divider()
+            st.markdown("**💼 Position P&L alerts** — on your total live Fyers P&L:")
+            try:
+                _pncfg = _sps.get_pnl_alert()
+            except Exception:
+                _pncfg = {}
+            _pnc1, _pnc2 = st.columns(2)
+            _pn_p = _pnc1.text_input("Profit ≥ (₹)", key="sa_pnl_profit",
+                                     value=("" if _pncfg.get("profit") is None else f"{_pncfg['profit']:g}"),
+                                     placeholder="e.g. 2000")
+            _pn_l = _pnc2.text_input("Loss ≥ (₹, positive number)", key="sa_pnl_loss",
+                                     value=("" if _pncfg.get("loss") is None else f"{_pncfg['loss']:g}"),
+                                     placeholder="e.g. 1500")
             if st.button("💾 Save alert levels", key="sa_save"):
                 try:
                     _sps.set_alert_config(_new_acfg)
+                    _sps.set_pnl_alert(_sa_parse(_pn_p), _sa_parse(_pn_l))
                     st.success("Saved — watched by the 5-second cloud watcher (24/7, no "
                                "browser needed) and this tab (60s), one Slack per "
                                "crossing. Empty box = that side not watched.")
@@ -3588,6 +3635,55 @@ def _render_spreads(token: str):
                        "after it comes back inside the band. The cloud watcher samples "
                        "every ~5s during MCX hours, so even a seconds-long spike is "
                        "caught. Uses the same Slack token/channel as the SILVERMIC tab.")
+
+        # ── 💼 Live Fyers positions + your ACTUAL spread P&L ──────────────────
+        try:
+            from fyers_fetcher import get_positions as _fy_positions
+            _posd = _fy_positions(token)
+        except Exception:
+            _posd = None
+        if _posd is not None:
+            _open_pos = [p for p in _posd["positions"] if p["net_qty"] != 0]
+            if _open_pos:
+                st.markdown("**💼 My Positions (Fyers live):**")
+                st.dataframe(pd.DataFrame([{
+                    "Contract": _sps.contract_label(p["symbol"]),
+                    "Side":     p["side"],
+                    "Qty":      p["net_qty"],
+                    "Avg (₹)":  round(p["avg"], 2),
+                    "LTP (₹)":  round(p["ltp"], 2),
+                    "P&L (₹)":  round(p["pl"], 2),
+                    "Product":  p["product"],
+                } for p in _open_pos]), use_container_width=True, hide_index=True)
+                for _psp in _sps.detect_position_spreads(_posd["positions"]):
+                    _pspc = "#00ff88" if _psp["pnl"] >= 0 else "#ff4455"
+                    st.markdown(
+                        f"🔗 <b>Your spread: {_psp['side']} {_psp['label']}</b> × {_psp['lots']} lot — "
+                        f"entry ₹{_psp['entry_spread']:,.0f} → now ₹{_psp['live_spread']:,.0f} · "
+                        f"<b style='color:{_pspc}'>P&L ₹{_psp['pnl']:,.0f}</b>",
+                        unsafe_allow_html=True)
+                _tpl = _posd["total_pl"]
+                _tplc = "#00ff88" if _tpl >= 0 else "#ff4455"
+                st.markdown(f"Total P&L: <b style='color:{_tplc}'>₹{_tpl:,.0f}</b>",
+                            unsafe_allow_html=True)
+                # P&L threshold alerts (60s here; the 5s watcher checks every ~30s)
+                try:
+                    _pn_events = _sps.check_pnl_alert(_tpl)
+                except Exception:
+                    _pn_events = []
+                if _pn_events:
+                    _pn_cfg  = st.session_state.get("sm_cfg") or _sm_config_load()
+                    _pn_bot  = _pn_cfg.get("slack_bot_token", "")
+                    _pn_chan = _pn_cfg.get("slack_channel", "") or "#general"
+                    from notifier import send_slack_text as _pn_send
+                    for _pev in _pn_events:
+                        _pn_txt = _sps.pnl_alert_text(_pev)
+                        if _pn_bot and _pn_send(_pn_bot, _pn_chan, _pn_txt):
+                            st.success(f"🔔 Slack sent → {_pn_txt}")
+                        else:
+                            st.warning(f"🔔 {_pn_txt} — Slack NOT sent (check token/channel).")
+            else:
+                st.caption("💼 No open Fyers positions.")
 
         # Check crossings on every 60s fragment run (shared dedup with the cron).
         try:
