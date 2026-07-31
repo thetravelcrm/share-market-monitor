@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.83"
-_APP_BUILD   = "31 Jul 2026 23:03"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.84"
+_APP_BUILD   = "31 Jul 2026 23:15"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3630,6 +3630,10 @@ def _render_spreads(token: str):
                 with st.spinner("Fetching 7-day spread history + DeepSeek Pro thinking…"):
                     _hist7 = _sps.spread_history_daily(
                         token, _sel["near_hist"], _sel["far_hist"], days=7)
+                    if not _hist7:
+                        st.caption("⚠️ 7-day history unavailable right now (Fyers returned "
+                                   "no bars) — the AI is judging with band + cost data only. "
+                                   "Worth re-running in a minute for the full picture.")
                     _mypos5 = "none"
                     try:
                         from fyers_fetcher import get_positions as _gp5

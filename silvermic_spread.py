@@ -182,13 +182,24 @@ def spread_history_daily(token: str, near_hist: str, far_hist: str,
     (inner-aligned on bar timestamp). Real data for the AI band-quality check —
     empty list when history is unavailable."""
     try:
+        import time as _t
         import pandas as pd
         from silvermic_continuous import _fetch_one
         now = datetime.now(timezone.utc)
         d_from = (now - timedelta(days=days + 3)).strftime("%Y-%m-%d")
         d_to   = now.strftime("%Y-%m-%d")
-        n = _fetch_one(near_hist, token, "15", d_from, d_to)
-        f = _fetch_one(far_hist,  token, "15", d_from, d_to)
+
+        def _fetch_retry(sym):
+            # One retry after a short pause — a fragment run fires several Fyers
+            # calls back-to-back and a single leg can transiently return no bars.
+            df = _fetch_one(sym, token, "15", d_from, d_to)
+            if df is None or df.empty:
+                _t.sleep(1.0)
+                df = _fetch_one(sym, token, "15", d_from, d_to)
+            return df
+
+        n = _fetch_retry(near_hist)
+        f = _fetch_retry(far_hist)
         if n is None or f is None or n.empty or f.empty:
             return []
         sp = (f["Close"] - n["Close"]).dropna()          # aligns on shared bars
