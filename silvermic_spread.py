@@ -260,21 +260,25 @@ def trade_worth_check(spread_now: float, book_cost: float | None,
 #  All-time min/max persistence (gist + local fallback)
 # ─────────────────────────────────────────────────────────────
 
+import logging
+_slog = logging.getLogger("silvermic_spread")
+
+
 def _load_state() -> dict:
     try:
         import monitor_state
         s = monitor_state.load(_STATE_FILE)
         if s:
             return s
-    except Exception:
-        pass
+    except Exception as e:
+        _slog.warning("gist state load failed (%s) — trying local fallback", e)
     try:
         p = os.path.join(os.path.dirname(__file__), _STATE_FILE)
         if os.path.exists(p):
             with open(p) as f:
                 return json.load(f)
-    except Exception:
-        pass
+    except Exception as e:
+        _slog.warning("local state load failed: %s", e)
     return {}
 
 
@@ -282,14 +286,16 @@ def _save_state(state: dict) -> None:
     try:
         import monitor_state
         monitor_state.save(state, _STATE_FILE)
-    except Exception:
-        pass
+    except Exception as e:
+        # Alert dedup + min/max sharing depend on the gist — a persistent failure
+        # here means app/cron/watcher stop seeing each other's flags.
+        _slog.warning("gist state save failed: %s", e)
     try:                                  # local fallback (best-effort)
         p = os.path.join(os.path.dirname(__file__), _STATE_FILE)
         with open(p, "w") as f:
             json.dump(state, f)
-    except Exception:
-        pass
+    except Exception as e:
+        _slog.warning("local state save failed: %s", e)
 
 
 def _fold(rec: dict, value: float, ts: str) -> None:

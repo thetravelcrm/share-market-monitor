@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.85"
-_APP_BUILD   = "31 Jul 2026 23:23"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.86"
+_APP_BUILD   = "31 Jul 2026 23:39"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3527,11 +3527,11 @@ def _render_spreads(token: str):
                 "Live spreads resume during market hours (9:00–23:30 IST).")
 
     if _contracts:
-        st.markdown("**Tradeable contracts (live):**")
+        st.markdown("##### 📊 Step 1 — Market board (tradeable contracts, live)")
         _ccols = st.columns(len(_contracts))
         for _cc, _ct in zip(_ccols, _contracts):
             _cc.metric(f"{_ct['label']} · {_ct['dte']}d", f"₹{_ct['price']:,.0f}")
-        _rows, _ts_rows = [], []
+        _rows, _ts_rows, _cands = [], [], []
         for _sp in _spreads:
             _rec = _minmax.get(_sp["key"], {})
             _mn, _mx = _rec.get("min", {}), _rec.get("max", {})
@@ -3566,6 +3566,10 @@ def _render_spreads(token: str):
                     _idea = "⚪ Signal, but edge < cost — skip"
                 elif _wc["verdict"] == "THIN" and _idea.startswith(("🟢", "🔴")):
                     _idea += " (thin edge — half size)"
+            if _idea.startswith(("🟢", "🔴")):
+                _cands.append({"label": _sp["label"], "pos": _read, "idea": _idea,
+                               "ratio": _wc.get("ratio", 0),
+                               "thin": _wc["verdict"] == "THIN"})
             _rows.append({
                 "Pair":      _sp["label"],
                 "Now (₹)":   _cur,
@@ -3582,6 +3586,18 @@ def _render_spreads(token: str):
                 "Min @ (IST)": _sps.fmt_ts_ist(_mn.get("ts", "")) if _mn else "—",
                 "Max @ (IST)": _sps.fmt_ts_ist(_mx.get("ts", "")) if _mx else "—",
             })
+
+        # One-line answer to "is there a trade right now?" — before any table reading.
+        if _cands:
+            _best = max(_cands, key=lambda c: c["ratio"])
+            _sz = "half size (thin edge)" if _best["thin"] else "full size candidate"
+            st.success(f"🎯 **Candidate: {_best['label']}** — {_best['pos']}, edge "
+                       f"{_best['ratio']}× cost → {_best['idea']} · {_sz}. "
+                       f"**Next:** run the Step-2 AI verdict before trading.")
+        else:
+            st.info("😴 **No trade right now** — no pair is at a band extreme with edge "
+                    "≥1.5× cost. Doing nothing is the correct position; the alerts "
+                    "will ping Slack when that changes.")
         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
         # Heartbeat: prove the record is alive even when the all-time band hasn't
         # moved for days (min/max only change on a NEW extreme — that's by design).
@@ -3590,18 +3606,25 @@ def _render_spreads(token: str):
             if _meta.get("last_sample"):
                 st.caption(f"🟢 Record alive — last sampled "
                            f"{_sps.fmt_ts_ist(_meta['last_sample'])} IST "
-                           f"({_meta.get('by', '?')}). **Today** = this session's range; "
-                           f"Min/Max dates change only when the all-time band breaks.")
-        except Exception:
-            pass
-        st.caption("**Now** = live far−near spread. SILVERMIC = 1 kg/lot, so ₹/kg here is also "
-                   "your **₹ P&L per lot pair**. **Position** = where Now sits in its stored "
-                   "min–max band (0%=at min, 100%=at max): low → spread is cheap (bias LONG it), "
-                   "high → rich (bias SHORT it). **Cost vs Edge** = expected capture (distance "
-                   "to band mid) ÷ full round-trip cost (both legs' live bid-ask width + "
-                   "~₹130 est. charges): ✅ ≥3× take it · ⚠️ 1.5–3× half size · ❌ <1.5× skip.")
+                           f"({_meta.get('by', '?')})")
+        except Exception as _hb_err:
+            st.caption(f"heartbeat unavailable: {_hb_err}")
+        with st.expander("ℹ️ How to read this table"):
+            st.markdown(
+                "- **Now** — live far−near spread (₹/kg). SILVERMIC = 1 kg/lot, so this is "
+                "also your **₹ P&L per lot pair**.\n"
+                "- **Today** — this session's range (proves the recorder is live). "
+                "**Min/Max** — all-time band; the dates change only when the band breaks.\n"
+                "- **Position** — where Now sits in the band: **0% = at min (CHEAP → bias "
+                "LONG the spread)**, **100% = at max (RICH → bias SHORT it)**, middle = FAIR.\n"
+                "- **Cost vs Edge** — expected capture (distance to band mid) ÷ full "
+                "round-trip cost (both legs' live bid-ask width + ~₹130 charges): "
+                "**✅ ≥3× take it · ⚠️ 1.5–3× half size · ❌ <1.5× skip.**\n"
+                "- An idea that fails the cost bar is auto-downgraded — the table never "
+                "recommends a trade that can't pay its own friction.")
 
         # ── 🔬 DeepSeek Pro final gate on a spread trade (on demand — Pro is slow) ──
+        st.markdown("##### 🧭 Step 2 — AI final gate (DeepSeek Pro, on demand)")
         _sp_dsa = None
         try:
             import deepseek_analyzer as _sp_dsa_mod
@@ -3663,7 +3686,8 @@ def _render_spreads(token: str):
             st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
 
         # ── 🔔 Per-pair threshold alerts (watched here every 60s AND by the 24/7 cron) ──
-        with st.expander("🔔 Spread Alerts — Slack when Now crosses your levels"):
+        st.markdown("##### 🔔 Step 4 — Alerts (Slack, watched 24/7)")
+        with st.expander("Set spread levels + position P&L alerts", expanded=False):
             try:
                 _acfg = _sps.get_alert_config()
             except Exception:
@@ -3714,15 +3738,20 @@ def _render_spreads(token: str):
                        "caught. Uses the same Slack token/channel as the SILVERMIC tab.")
 
         # ── 💼 Live Fyers positions + your ACTUAL spread P&L ──────────────────
+        st.markdown("##### 💼 Step 3 — My live position (honest P&L)")
+        _pos_err = None
         try:
             from fyers_fetcher import get_positions as _fy_positions
             _posd = _fy_positions(token)
-        except Exception:
-            _posd = None
-        if _posd is not None:
+        except Exception as _pe:
+            _posd, _pos_err = None, str(_pe)
+        if _posd is None:
+            st.caption(f"💼 Positions unavailable right now"
+                       f"{' — ' + _pos_err if _pos_err else ' (Fyers returned an error)'}. "
+                       f"Refresh to retry.")
+        else:
             _open_pos = [p for p in _posd["positions"] if p["net_qty"] != 0]
             if _open_pos:
-                st.markdown("**💼 My Positions (Fyers live):**")
                 # Best bid/offer for the held contracts — the ACTUAL exit prices.
                 try:
                     _pos_quotes = _sps.quote_many([p["symbol"] for p in _open_pos], token)
@@ -3755,16 +3784,23 @@ def _render_spreads(token: str):
                            "closing at the touch right now — longs sell at **Bid**, shorts "
                            "buy back at **Offer**. On thin far months this is the honest number.")
                 for _psp in _sps.detect_position_spreads(_posd["positions"], _pos_quotes):
+                    _move = _psp["live_spread"] - _psp["entry_spread"]
+                    # what the trader needs the gap to DO from here
+                    _need = ("needs the gap to WIDEN" if _psp["side"] == "LONG"
+                             else "needs the gap to NARROW")
+                    _dir  = "⬆️ widened" if _move > 0 else ("⬇️ narrowed" if _move < 0 else "flat")
                     _pspc = "#00ff88" if _psp["pnl"] >= 0 else "#ff4455"
                     _exec_bit = ""
                     if _psp.get("exit_spread") is not None:
                         _pspe = "#00ff88" if _psp["exec_pnl"] >= 0 else "#ff4455"
-                        _exec_bit = (f" · close at touch ₹{_psp['exit_spread']:,.0f} → "
-                                     f"<b style='color:{_pspe}'>exit P&L ₹{_psp['exec_pnl']:,.0f}</b>")
+                        _exec_bit = (f" · if you close now: "
+                                     f"<b style='color:{_pspe}'>₹{_psp['exec_pnl']:,.0f}</b> "
+                                     f"(at the touch)")
                     st.markdown(
                         f"🔗 <b>Your spread: {_psp['side']} {_psp['label']}</b> × {_psp['lots']} lot — "
-                        f"entry ₹{_psp['entry_spread']:,.0f} → now ₹{_psp['live_spread']:,.0f} · "
-                        f"<b style='color:{_pspc}'>P&L ₹{_psp['pnl']:,.0f}</b>{_exec_bit}",
+                        f"entry ₹{_psp['entry_spread']:,.0f} → now ₹{_psp['live_spread']:,.0f} "
+                        f"({_dir} ₹{abs(_move):,.0f}; {_need}) · "
+                        f"mark <b style='color:{_pspc}'>₹{_psp['pnl']:,.0f}</b>{_exec_bit}",
                         unsafe_allow_html=True)
                 _tpl = _posd["total_pl"]
                 _tplc = "#00ff88" if _tpl >= 0 else "#ff4455"
@@ -3773,38 +3809,42 @@ def _render_spreads(token: str):
                 # P&L threshold alerts (60s here; the 5s watcher checks every ~30s)
                 try:
                     _pn_events = _sps.check_pnl_alert(_tpl)
-                except Exception:
+                except Exception as _pn_err:
                     _pn_events = []
+                    st.caption(f"⚠️ P&L alert check failed: {_pn_err}")
                 if _pn_events:
                     _pn_cfg  = st.session_state.get("sm_cfg") or _sm_config_load()
                     _pn_bot  = _pn_cfg.get("slack_bot_token", "")
                     _pn_chan = _pn_cfg.get("slack_channel", "") or "#general"
-                    from notifier import send_slack_text as _pn_send
+                    import notifier as _ntf
                     for _pev in _pn_events:
                         _pn_txt = _sps.pnl_alert_text(_pev)
-                        if _pn_bot and _pn_send(_pn_bot, _pn_chan, _pn_txt):
+                        if _pn_bot and _ntf.send_slack_text(_pn_bot, _pn_chan, _pn_txt):
                             st.success(f"🔔 Slack sent → {_pn_txt}")
                         else:
-                            st.warning(f"🔔 {_pn_txt} — Slack NOT sent (check token/channel).")
+                            _why = _ntf.LAST_ERROR if _pn_bot else "no Slack token configured"
+                            st.warning(f"🔔 {_pn_txt} — Slack NOT sent ({_why}).")
             else:
                 st.caption("💼 No open Fyers positions.")
 
         # Check crossings on every 60s fragment run (shared dedup with the cron).
         try:
             _sa_events = _sps.check_spread_alerts(_spreads)
-        except Exception:
+        except Exception as _sa_err:
             _sa_events = []
+            st.caption(f"⚠️ Spread alert check failed: {_sa_err}")
         if _sa_events:
             _sa_cfg  = st.session_state.get("sm_cfg") or _sm_config_load()
             _sa_bot  = _sa_cfg.get("slack_bot_token", "")
             _sa_chan = _sa_cfg.get("slack_channel", "") or "#general"
-            from notifier import send_slack_text as _sa_send
+            import notifier as _ntf2
             for _ev in _sa_events:
                 _sa_txt = _sps.alert_text(_ev)
-                if _sa_bot and _sa_send(_sa_bot, _sa_chan, _sa_txt):
+                if _sa_bot and _ntf2.send_slack_text(_sa_bot, _sa_chan, _sa_txt):
                     st.success(f"🔔 Slack sent → {_sa_txt}")
                 else:
-                    st.warning(f"🔔 Crossed but Slack NOT sent (check token/channel): {_sa_txt}")
+                    _why2 = _ntf2.LAST_ERROR if _sa_bot else "no Slack token configured"
+                    st.warning(f"🔔 Crossed but Slack NOT sent ({_why2}): {_sa_txt}")
     else:
         # Market closed, or Fyers returned nothing → show persisted all-time min/max.
         _rows = []
