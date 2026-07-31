@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.80"
-_APP_BUILD   = "31 Jul 2026 22:20"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.81"
+_APP_BUILD   = "31 Jul 2026 22:33"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3646,21 +3646,48 @@ def _render_spreads(token: str):
             _open_pos = [p for p in _posd["positions"] if p["net_qty"] != 0]
             if _open_pos:
                 st.markdown("**💼 My Positions (Fyers live):**")
-                st.dataframe(pd.DataFrame([{
-                    "Contract": _sps.contract_label(p["symbol"]),
-                    "Side":     p["side"],
-                    "Qty":      p["net_qty"],
-                    "Avg (₹)":  round(p["avg"], 2),
-                    "LTP (₹)":  round(p["ltp"], 2),
-                    "P&L (₹)":  round(p["pl"], 2),
-                    "Product":  p["product"],
-                } for p in _open_pos]), use_container_width=True, hide_index=True)
-                for _psp in _sps.detect_position_spreads(_posd["positions"]):
+                # Best bid/offer for the held contracts — the ACTUAL exit prices.
+                try:
+                    _pos_quotes = _sps.quote_many([p["symbol"] for p in _open_pos], token)
+                except Exception:
+                    _pos_quotes = {}
+                _pos_rows = []
+                for p in _open_pos:
+                    _q = _pos_quotes.get(p["symbol"]) or {}
+                    _bid, _ask = _q.get("bid", 0), _q.get("ask", 0)
+                    # Exit at the touch: long sells at BID, short buys back at ASK.
+                    if p["net_qty"] > 0 and _bid:
+                        _exec = (_bid - p["avg"]) * p["net_qty"]
+                    elif p["net_qty"] < 0 and _ask:
+                        _exec = (p["avg"] - _ask) * (-p["net_qty"])
+                    else:
+                        _exec = None
+                    _pos_rows.append({
+                        "Contract":  _sps.contract_label(p["symbol"]),
+                        "Side":      p["side"],
+                        "Qty":       p["net_qty"],
+                        "Avg (₹)":   round(p["avg"], 2),
+                        "LTP (₹)":   round(p["ltp"], 2),
+                        "Bid (₹)":   round(_bid, 2) if _bid else "—",
+                        "Offer (₹)": round(_ask, 2) if _ask else "—",
+                        "P&L (₹)":   round(p["pl"], 2),
+                        "Exit P&L (₹)": round(_exec, 2) if _exec is not None else "—",
+                    })
+                st.dataframe(pd.DataFrame(_pos_rows), use_container_width=True, hide_index=True)
+                st.caption("**P&L** = Fyers mark (vs LTP). **Exit P&L** = what you'd realize "
+                           "closing at the touch right now — longs sell at **Bid**, shorts "
+                           "buy back at **Offer**. On thin far months this is the honest number.")
+                for _psp in _sps.detect_position_spreads(_posd["positions"], _pos_quotes):
                     _pspc = "#00ff88" if _psp["pnl"] >= 0 else "#ff4455"
+                    _exec_bit = ""
+                    if _psp.get("exit_spread") is not None:
+                        _pspe = "#00ff88" if _psp["exec_pnl"] >= 0 else "#ff4455"
+                        _exec_bit = (f" · close at touch ₹{_psp['exit_spread']:,.0f} → "
+                                     f"<b style='color:{_pspe}'>exit P&L ₹{_psp['exec_pnl']:,.0f}</b>")
                     st.markdown(
                         f"🔗 <b>Your spread: {_psp['side']} {_psp['label']}</b> × {_psp['lots']} lot — "
                         f"entry ₹{_psp['entry_spread']:,.0f} → now ₹{_psp['live_spread']:,.0f} · "
-                        f"<b style='color:{_pspc}'>P&L ₹{_psp['pnl']:,.0f}</b>",
+                        f"<b style='color:{_pspc}'>P&L ₹{_psp['pnl']:,.0f}</b>{_exec_bit}",
                         unsafe_allow_html=True)
                 _tpl = _posd["total_pl"]
                 _tplc = "#00ff88" if _tpl >= 0 else "#ff4455"

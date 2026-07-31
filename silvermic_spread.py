@@ -68,6 +68,10 @@ def _quote_val(v: dict) -> dict:
         "high":       float(v.get("high_price", lp) or lp),
         "low":        float(v.get("low_price", lp) or lp),
         "volume":     int(v.get("volume", 0) or 0),
+        # Best bid/offer — the ACTUAL exit prices (LTP is just the last trade; on
+        # thin far months your real close happens at bid (sell) / ask (buy back)).
+        "bid":        float(v.get("bid", 0) or 0),
+        "ask":        float(v.get("ask", 0) or 0),
     }
 
 
@@ -343,11 +347,15 @@ def _sym_order(symbol: str) -> tuple:
     return (int(m.group(2)), _MON_NUM.get(m.group(3), 99))
 
 
-def detect_position_spreads(positions: list[dict]) -> list[dict]:
+def detect_position_spreads(positions: list[dict], quotes: dict | None = None) -> list[dict]:
     """Find SILVERMIC calendar-spread pairs among live positions: a LONG and a SHORT
     SILVERMIC FUT held together. Returns [{label, side, lots, entry_spread,
     live_spread, pnl}] — side is the SPREAD's side (LONG spread = long the far leg).
-    SILVERMIC = 1 kg/lot, so spread ₹/kg × lots = ₹ P&L."""
+    SILVERMIC = 1 kg/lot, so spread ₹/kg × lots = ₹ P&L.
+
+    When `quotes` ({symbol: {bid, ask}}) is given, each pair also gets the EXECUTABLE
+    close: exit_spread/exec_pnl computed at the touch — long legs sell at BID, short
+    legs buy back at ASK — i.e. the P&L you'd actually realize crossing the book now."""
     sil = [p for p in positions
            if _FUT_RE.match(p.get("symbol", "")) and "SILVERMIC" in p.get("symbol", "")
            and p.get("net_qty")]
@@ -366,14 +374,29 @@ def detect_position_spreads(positions: list[dict]) -> list[dict]:
             live  = far["ltp"] - near["ltp"]
             long_spread = far["net_qty"] > 0          # long far leg == LONG the spread
             pnl = (live - entry if long_spread else entry - live) * lots
-            pairs.append({
+            pair = {
                 "label":        f"{contract_label(far['symbol'])} − {contract_label(near['symbol'])}",
                 "side":         "LONG" if long_spread else "SHORT",
                 "lots":         lots,
                 "entry_spread": round(entry, 2),
                 "live_spread":  round(live, 2),
                 "pnl":          round(pnl, 2),
-            })
+            }
+            if quotes:
+                fq = quotes.get(far["symbol"]) or {}
+                nq = quotes.get(near["symbol"]) or {}
+                if long_spread:
+                    # close = sell far at bid, buy near back at ask
+                    f_px, n_px = fq.get("bid", 0), nq.get("ask", 0)
+                else:
+                    # close = buy far back at ask, sell near at bid
+                    f_px, n_px = fq.get("ask", 0), nq.get("bid", 0)
+                if f_px and n_px:
+                    exit_spread = f_px - n_px
+                    exec_pnl = (exit_spread - entry if long_spread else entry - exit_spread) * lots
+                    pair["exit_spread"] = round(exit_spread, 2)
+                    pair["exec_pnl"]    = round(exec_pnl, 2)
+            pairs.append(pair)
     return pairs
 
 
