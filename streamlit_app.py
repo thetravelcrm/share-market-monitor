@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.89"
-_APP_BUILD   = "04 Aug 2026 20:31"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.90"
+_APP_BUILD   = "04 Aug 2026 20:43"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3920,10 +3920,10 @@ if _FRAG is not None:
 
 with tab_spread:
     st.markdown("### 📐 SILVERMIC Calendar Spreads")
-    st.caption("Live spread between Zerodha-tradeable SILVERMIC contracts — nearest 3, "
+    st.caption("Live spread between ALL Zerodha-tradeable SILVERMIC contracts, "
                "auto-rolled: the near leg leaves the board 11 days before expiry "
-               "(Zerodha blocks the final week; extra safety buffer) and the next "
-               "contract joins automatically.")
+               "(Zerodha blocks the final week; extra safety buffer) and newly listed "
+               "contracts join automatically.")
     _sp_token = st.session_state.get("fyers_token", "")
     if not _sp_token:
         st.info("🔌 Connect Fyers in the sidebar to view live calendar spreads.")

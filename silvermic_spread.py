@@ -152,10 +152,11 @@ def tradeable_contracts(token: str, min_days: int = _TRADEABLE_MIN_DAYS) -> list
             c["ask"] = float(q.get("ask", 0) or 0) if q else 0.0
             out.append(c)
     out.sort(key=lambda c: c["expiry"])
-    # Only the NEAREST 3 contracts (near/mid/far) — that's the tradeable board.
-    # When a 4th (e.g. Apr-27) lists on Fyers, showing it would explode the table
-    # to 6 pairs of mostly-illiquid combinations; it joins when the near leg rolls.
-    return out[:3]
+    # ALL Zerodha-tradeable contracts (up to the 4 live expiries). The near leg
+    # drops at dte<=_TRADEABLE_MIN_DAYS (safety buffer before Zerodha's final-week
+    # block); illiquid far-pair combos are handled by the Cost-vs-Edge gate, which
+    # marks them unpayable rather than hiding them.
+    return out[:4]
 
 
 def pairwise_spreads(contracts: list[dict]) -> list[dict]:
