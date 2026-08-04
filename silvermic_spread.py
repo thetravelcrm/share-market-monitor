@@ -24,7 +24,10 @@ from datetime import datetime, timezone, timedelta, date
 _MONTHS = (2, 4, 6, 8, 11)
 _IST = timezone(timedelta(hours=5, minutes=30))
 _STATE_FILE = "silvermic_spread_state.json"
-_TRADEABLE_MIN_DAYS = 7         # > 1 week to expiry == tradeable on Zerodha
+# Zerodha blocks new MCX positions in the final week before expiry; we drop the near
+# contract a few days EARLIER as a safety buffer (user rule: Aug-26 expiring 31 Aug
+# leaves the board on 20 Aug -> dte 11). The next contract auto-joins the 3-slot board.
+_TRADEABLE_MIN_DAYS = 11
 
 
 def _ist_today() -> date:
