@@ -44,7 +44,15 @@ def _creds() -> tuple[str, str]:
     return token, gist
 
 
+# True when the last load() could not READ the gist (no creds / HTTP error /
+# exception), as opposed to reading it successfully and finding nothing. Callers
+# that persist accumulated data check this so a failed read can't cause a wipe.
+LAST_LOAD_FAILED: bool = False
+
+
 def load(fname: str = _STATE_FILE) -> dict:
+    global LAST_LOAD_FAILED
+    LAST_LOAD_FAILED = True                     # cleared only on a confirmed read
     token, gist = _creds()
     if not (token and gist):
         return {}
@@ -52,8 +60,10 @@ def load(fname: str = _STATE_FILE) -> dict:
         r = requests.get(f"https://api.github.com/gists/{gist}",
                          headers={"Authorization": f"token {token}"}, timeout=10)
         if r.status_code != 200:
+            logger.warning("monitor_state load HTTP %s", r.status_code)
             return {}
         files = r.json().get("files", {})
+        LAST_LOAD_FAILED = False                # gist read OK (file may be absent)
         if fname in files:
             return json.loads(files[fname].get("content") or "{}")
     except Exception as exc:

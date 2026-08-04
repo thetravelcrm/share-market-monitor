@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.90"
-_APP_BUILD   = "04 Aug 2026 20:43"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.91"
+_APP_BUILD   = "04 Aug 2026 21:06"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3538,6 +3538,11 @@ def _render_spreads(token: str):
             _cur        = _sp["spread"]
             _mnv, _mxv  = _mn.get("value"), _mx.get("value")
             _rng = (_mxv - _mnv) if (_mnv is not None and _mxv is not None) else None
+            # A band is only meaningful once it has observed several sessions.
+            _age = _sps.band_age_days(_rec)
+            _young = _age is not None and _age < _sps.MIN_BAND_DAYS
+            _age_txt = ("" if _age is None else
+                        (f" · band {_age:.0f}d ⚠️" if _young else f" · band {_age:.0f}d"))
             if _rng and _rng > 0:
                 _pos = max(0.0, min(100.0, (_cur - _mnv) / _rng * 100))
                 if _pos <= 25:
@@ -3546,6 +3551,9 @@ def _render_spreads(token: str):
                     _read, _idea = f"{_pos:.0f}% · RICH", "🔴 SHORT spread (sell far · buy near)"
                 else:
                     _read, _idea = f"{_pos:.0f}% · FAIR", "⚪ Neutral — wait for an edge"
+                _read += _age_txt
+                if _young and _idea.startswith(("🟢", "🔴")):
+                    _idea = f"⏳ Band only {_age:.0f}d old — not a real signal yet"
             else:
                 _read, _idea = "—", "Backfill to build a range"
             _td = _rec.get("today") or {}
@@ -3590,14 +3598,14 @@ def _render_spreads(token: str):
         # One-line answer to "is there a trade right now?" — before any table reading.
         if _cands:
             _best = max(_cands, key=lambda c: c["ratio"])
-            _sz = "half size (thin edge)" if _best["thin"] else "full size candidate"
+            _sz = "**half size** (thin edge)" if _best["thin"] else "**full size**"
             st.success(f"🎯 **Candidate: {_best['label']}** — {_best['pos']}, edge "
                        f"{_best['ratio']}× cost → {_best['idea']} · {_sz}. "
                        f"**Next:** run the Step-2 AI verdict before trading.")
         else:
-            st.info("😴 **No trade right now** — no pair is at a band extreme with edge "
-                    "≥1.5× cost. Doing nothing is the correct position; the alerts "
-                    "will ping Slack when that changes.")
+            st.info("😴 **No trade right now** — no pair is both at a band extreme "
+                    "(≥5-day band) and worth ≥1.5× its cost. Doing nothing is the "
+                    "correct position; the alerts will ping Slack when that changes.")
         st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
         # Heartbeat: prove the record is alive even when the all-time band hasn't
         # moved for days (min/max only change on a NEW extreme — that's by design).

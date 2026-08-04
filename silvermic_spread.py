@@ -238,6 +238,28 @@ def spread_history_daily(token: str, near_hist: str, far_hist: str,
 EST_CHARGES_RT = 130.0
 
 
+# A band younger than this isn't a mean-reversion range yet — it's just the recent
+# swing. Position % against it is noise, so a trade on it isn't a real candidate.
+MIN_BAND_DAYS = 5.0
+
+
+def band_age_days(rec: dict) -> float | None:
+    """How long the stored band has been accumulating: now − the OLDEST extreme
+    timestamp, in days. None when the record has no usable timestamps."""
+    stamps = []
+    for side in ("min", "max"):
+        ts = (rec.get(side) or {}).get("ts")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                stamps.append(dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
+            except Exception:
+                pass
+    if not stamps:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - min(stamps)).total_seconds() / 86400)
+
+
 def trade_worth_check(spread_now: float, book_cost: float | None,
                       band_min: float | None, band_max: float | None) -> dict:
     """Is a mean-reversion trade on this pair worth its friction RIGHT NOW?
@@ -271,13 +293,25 @@ import logging
 _slog = logging.getLogger("silvermic_spread")
 
 
+# True when the last _load_state() could not read the gist. A blind save after a
+# failed load would overwrite the accumulated all-time band with a single fresh
+# sample — that is how the bands got reset to one day old.
+_LOAD_FAILED = False
+
+
 def _load_state() -> dict:
+    global _LOAD_FAILED
+    _LOAD_FAILED = False
     try:
         import monitor_state
         s = monitor_state.load(_STATE_FILE)
         if s:
             return s
+        # Empty result: genuinely-empty gist vs failed read are indistinguishable
+        # unless monitor_state says so.
+        _LOAD_FAILED = bool(getattr(monitor_state, "LAST_LOAD_FAILED", False))
     except Exception as e:
+        _LOAD_FAILED = True
         _slog.warning("gist state load failed (%s) — trying local fallback", e)
     try:
         p = os.path.join(os.path.dirname(__file__), _STATE_FILE)
@@ -289,9 +323,40 @@ def _load_state() -> dict:
     return {}
 
 
+def _merge_states(remote: dict, local: dict) -> dict:
+    """Fold `local` onto `remote` without losing history: band records keep the TRUE
+    extremes from both sides; config/meta keys prefer the newer local value."""
+    out = dict(remote)
+    for key, rec in local.items():
+        if key.startswith("_") or not isinstance(rec, dict):
+            out[key] = rec                       # _alerts/_pnl/_meta: local wins
+            continue
+        base = dict(out.get(key) or {})
+        base.update({k: v for k, v in rec.items() if k not in ("min", "max")})
+        for side, better in (("min", min), ("max", max)):
+            r, l = (out.get(key) or {}).get(side), rec.get(side)
+            if r and l:
+                base[side] = r if better(r["value"], l["value"]) == r["value"] else l
+            else:
+                base[side] = l or r
+        out[key] = base
+    return out
+
+
 def _save_state(state: dict) -> None:
     try:
         import monitor_state
+        if _LOAD_FAILED:
+            # Don't clobber the stored band with a state built from nothing: re-read
+            # once and merge; if that read also fails, skip the gist write entirely.
+            remote = monitor_state.load(_STATE_FILE)
+            if remote:
+                state = _merge_states(remote, state)
+                _slog.warning("state save after failed load — merged with gist "
+                              "instead of overwriting")
+            elif getattr(monitor_state, "LAST_LOAD_FAILED", False):
+                _slog.error("gist unreadable — SKIPPING save to protect stored band")
+                raise RuntimeError("gist unreadable; save skipped")
         monitor_state.save(state, _STATE_FILE)
     except Exception as e:
         # Alert dedup + min/max sharing depend on the gist — a persistent failure
