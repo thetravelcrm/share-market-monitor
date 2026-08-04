@@ -505,7 +505,10 @@ def analyze(
     df_15m = get_continuous(access_token, "15", days_back=_days)
 
     if df_1h.empty or df_15m.empty or len(df_15m) < 30:
-        raise RuntimeError("Insufficient data — check Fyers token")
+        raise RuntimeError(
+            f"Insufficient data (1H bars: {len(df_1h)}, 15m bars: {len(df_15m)}) — "
+            f"usually a transient Fyers history hiccup; hit Refresh Signal. If it "
+            f"persists, reconnect Fyers in the sidebar.")
 
     live_price = float(df_15m["Close"].iloc[-1])
     htf = _htf_filter(df_1h, current_price=live_price, rsi_bull_min=rsi_bull_min)

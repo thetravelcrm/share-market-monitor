@@ -73,21 +73,36 @@ def _list_contracts(start: datetime, end: datetime) -> list[dict]:
 
 def _fetch_one(symbol: str, token: str, resolution: str,
                d_from: str, d_to: str) -> pd.DataFrame:
-    """Fetch OHLCV for one specific contract (cont_flag=0)."""
+    """Fetch OHLCV for one specific contract (cont_flag=0).
+
+    Retries once after a short pause when Fyers returns an error or zero candles —
+    the history API transiently comes back empty when several calls fire in a burst
+    (seen live: strategy "Insufficient data", spread history "no bars"). One retry
+    fixes the transient case for EVERY consumer of this function."""
+    import time as _t
     try:
         fyers = get_fyers_model(token)
-        resp = fyers.history({
+        req = {
             "symbol":      symbol,
             "resolution":  resolution,
             "date_format": "1",
             "range_from":  d_from,
             "range_to":    d_to,
             "cont_flag":   "0",
-        })
-        if resp.get("s") != "ok":
-            return pd.DataFrame()
-        candles = resp.get("candles", [])
+        }
+        candles = []
+        for attempt in (1, 2):
+            resp = fyers.history(req)
+            candles = resp.get("candles", []) if resp.get("s") == "ok" else []
+            if candles:
+                break
+            if attempt == 1:
+                logger.info("history empty for %s (s=%s) — retrying once",
+                            symbol, resp.get("s"))
+                _t.sleep(0.8)
         if not candles:
+            logger.warning("history returned no candles for %s %s..%s after retry",
+                           symbol, d_from, d_to)
             return pd.DataFrame()
         df = pd.DataFrame(candles,
                           columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])

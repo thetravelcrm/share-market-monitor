@@ -149,7 +149,10 @@ def tradeable_contracts(token: str, min_days: int = _TRADEABLE_MIN_DAYS) -> list
             c["ask"] = float(q.get("ask", 0) or 0) if q else 0.0
             out.append(c)
     out.sort(key=lambda c: c["expiry"])
-    return out
+    # Only the NEAREST 3 contracts (near/mid/far) — that's the tradeable board.
+    # When a 4th (e.g. Apr-27) lists on Fyers, showing it would explode the table
+    # to 6 pairs of mostly-illiquid combinations; it joins when the near leg rolls.
+    return out[:3]
 
 
 def pairwise_spreads(contracts: list[dict]) -> list[dict]:
