@@ -104,7 +104,10 @@ def _fetch_one(symbol: str, token: str, resolution: str,
             logger.warning("history returned no candles for %s %s..%s after retry",
                            symbol, d_from, d_to)
             return pd.DataFrame()
-        df = pd.DataFrame(candles,
+        # Fyers candles are [ts, o, h, l, c, v] and MAY carry extra fields (they
+        # added open interest in Aug 2026, which broke a fixed 6-column parse) —
+        # take the first 6 so schema additions can never kill history again.
+        df = pd.DataFrame([c[:6] for c in candles],
                           columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
         return df.set_index("timestamp").sort_index()

@@ -428,7 +428,10 @@ def get_history(symbol: str, access_token: str,
         candles = resp.get("candles", [])
         if not candles:
             return pd.DataFrame()
-        df = pd.DataFrame(candles,
+        # Candles are [ts, o, h, l, c, v] and MAY carry extra fields (Fyers added
+        # open interest in Aug 2026, breaking a fixed 6-column parse) — take the
+        # first 6 so schema additions can never kill history again.
+        df = pd.DataFrame([c[:6] for c in candles],
                           columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
         return df.set_index("timestamp")
