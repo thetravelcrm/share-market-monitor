@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.92"
-_APP_BUILD   = "05 Aug 2026 19:56"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.93"
+_APP_BUILD   = "05 Aug 2026 20:34"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -1151,7 +1151,8 @@ def _fetch_pe(symbol: str) -> tuple[float, float]:
 #  Main tabs
 # ═══════════════════════════════════════════════════════════════
 tab_impact, tab_opps, tab_signals, tab_mcx, tab_sectors, tab_news, \
-tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic, tab_spread = st.tabs([
+tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic, tab_spread, \
+tab_scanner = st.tabs([
     "🔥 Top Impacted",
     "⚡ Underreacted",
     "🎯 Trade Signals",
@@ -1164,6 +1165,7 @@ tab_nse, tab_journal, tab_backtest, tab_history, tab_silvermic, tab_spread = st.
     "📊 MPHR",
     "🥈 SILVERMIC",
     "📐 Spreads",
+    "🔎 Scanner",
 ])
 
 
@@ -4057,6 +4059,95 @@ with tab_spread:
         st.info("🔌 Connect Fyers in the sidebar to view live calendar spreads.")
     else:
         _render_spreads(_sp_token)
+
+
+# ───────────────────────────────────────────────────────────────
+#  TAB 13  —  Cross-commodity calendar-spread scanner
+# ───────────────────────────────────────────────────────────────
+with tab_scanner:
+    st.markdown("### 🔎 MCX Spread Scanner — the SILVERMIC rule across every commodity")
+    st.caption("Same rule, more markets: for every liquid MCX commodity it prices each "
+               "calendar pair against its recent band and ranks what's actually worth "
+               "trading after friction. Contracts and expiries come from the Fyers symbol "
+               "master (nothing hand-maintained); bands are built from history, so they're "
+               "**mature on the first scan**. Read-only — you place every order.")
+    _sc_token = st.session_state.get("fyers_token", "")
+    if not _sc_token:
+        st.info("🔌 Connect Fyers in the sidebar to run the scanner.")
+    else:
+        import mcx_scanner as _mcs
+        _sc1, _sc2, _sc3 = st.columns([3, 1, 1])
+        _sc_sel = _sc1.multiselect("Commodities", _mcs.ALL_COMMODITIES,
+                                   default=_mcs.LIQUID_DEFAULT, key="sc_sel")
+        _sc_lb = _sc2.number_input("Band lookback (d)", 10, 90, 30, step=5, key="sc_lb")
+        _sc_dte = _sc3.number_input("Skip expiry < (d)", 1, 40, 11, step=1, key="sc_dte")
+        if st.button("🔎 Scan now", key="sc_run", type="primary"):
+            if not _sc_sel:
+                st.warning("Pick at least one commodity.")
+            else:
+                _bar = st.progress(0.0, text="Starting…")
+                try:
+                    _sc_rows = _mcs.scan(
+                        _sc_token, commodities=_sc_sel, lookback_days=int(_sc_lb),
+                        min_dte=int(_sc_dte),
+                        progress=lambda f, t: _bar.progress(min(f, 1.0), text=t))
+                    st.session_state["sc_rows"] = _sc_rows
+                    st.session_state["sc_when"] = datetime.now(
+                        timezone(timedelta(hours=5, minutes=30))).strftime("%d %b %H:%M IST")
+                except Exception as _sce:
+                    st.error(f"Scan failed: {_sce}")
+                finally:
+                    _bar.empty()
+
+        _rows_sc = st.session_state.get("sc_rows")
+        if _rows_sc is None:
+            st.info("Pick commodities and hit **Scan now**. A 6-commodity scan pulls "
+                    "history for ~24 contracts, so give it up to a minute.")
+        elif not _rows_sc:
+            st.warning("Nothing scored — the symbol master or Fyers history may be "
+                       "unreachable. Check the app logs and retry.")
+        else:
+            _opps = _mcs.opportunities(_rows_sc, min_ratio=3.0)
+            _thin = [r for r in _rows_sc
+                     if r["bias"] in ("CHEAP", "RICH") and 1.5 <= (r["ratio"] or 0) < 3.0]
+            st.caption(f"Scanned {len({r['commodity'] for r in _rows_sc})} commodities · "
+                       f"{len(_rows_sc)} pairs · {st.session_state.get('sc_when', '')}")
+            if _opps:
+                st.success(f"🎯 **{len(_opps)} opportunity(ies)** at a band extreme with "
+                           f"edge ≥3× cost — best first below. Run the SILVERMIC-style "
+                           f"checks before trading: is the band trustworthy, and can you "
+                           f"actually get filled on both legs?")
+            elif _thin:
+                st.info(f"⚠️ {len(_thin)} thin setup(s) (1.5–3× cost) — half size at most, "
+                        f"nothing at full conviction right now.")
+            else:
+                st.info("😴 **Nothing worth trading** — no pair is at a band extreme with "
+                        "an edge that pays its friction. This is the normal state.")
+            _icon = {"GOOD": "✅", "THIN": "⚠️", "NO_EDGE": "❌", "UNKNOWN": "—"}
+            st.dataframe(pd.DataFrame([{
+                "Commodity": r["commodity"],
+                "Pair":      r["pair"],
+                "Near exp":  f"{r['near_dte']}d",
+                "Spread":    f"{r['spread']:,.2f}",
+                "Band":      f"{r['band_min']:,.0f} – {r['band_max']:,.0f} ({r['band_days']:.0f}d)",
+                "Position":  f"{r['pos']}% · {r['bias']}",
+                "Edge/Cost": (f"{_icon.get(r['verdict'],'')} {r['ratio']}×"
+                              if r["ratio"] is not None else "— no book"),
+                "Edge":      f"{r['edge']:,.2f}",
+                "Cost":      (f"{r['cost']:,.2f}" if r["cost"] is not None else "—"),
+                "Idea":      r["idea"],
+            } for r in _rows_sc]), use_container_width=True, hide_index=True, height=420)
+            st.caption("**Edge/Cost** is unit-free, so it compares fairly across "
+                       "commodities: edge (distance to band mid) ÷ cost (both legs' live "
+                       "bid-ask + ~0.03% all-in charges), both in price units. "
+                       "⚠️ **Spread/Edge/Cost are per price unit, not per lot** — MCX "
+                       "contract sizes aren't published in the symbol master and sources "
+                       "disagree, so multiply by your contract's units (SILVERMIC = 1 kg) "
+                       "to get ₹ per lot. Verify size on your contract note before sizing.")
+            if _opps:
+                with st.expander("📋 Copy-ready opportunity list"):
+                    for r in _opps:
+                        st.code(_mcs.alert_text(r), language=None)
 
 
 # ── Footer ────────────────────────────────────────────────────
