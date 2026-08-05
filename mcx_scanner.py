@@ -47,11 +47,13 @@ _MASTER_URL = "https://public.fyers.in/sym_details/MCX_COM_sym_master.json"
 MARGIN_BUDGET_DEFAULT = 40_000.0
 
 # Affordable AND reasonably liquid — the sensible default scan set.
-LIQUID_DEFAULT = ["CRUDEOILM", "NATGASMINI", "ZINCMINI", "ALUMINI", "LEADMINI", "GOLDTEN"]
+LIQUID_DEFAULT = ["SILVER100", "CRUDEOILM", "NATGASMINI", "LEADMINI",
+                  "GOLDTEN", "ZINCMINI", "ALUMINI"]
 
 # Everything worth offering; the margin budget decides what actually gets scanned.
 # (Thin/seasonal ones like GOLDPETAL, STEELREBAR, KAPAS are selectable but not default.)
-ALL_COMMODITIES = ["CRUDEOILM", "NATGASMINI", "ZINCMINI", "ALUMINI", "LEADMINI",
+ALL_COMMODITIES = ["SILVER100", "CRUDEOILM", "NATGASMINI", "ZINCMINI",
+                   "ALUMINI", "LEADMINI",
                    "GOLDTEN", "GOLDGUINEA", "GOLDPETAL", "STEELREBAR", "KAPAS",
                    "NICKEL", "NATURALGAS", "LEAD", "GOLDM", "SILVERM",
                    "ALUMINIUM", "ZINC", "CRUDEOIL", "COPPER", "SILVER", "GOLD"]

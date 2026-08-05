@@ -50,6 +50,7 @@ FALLBACK: dict[str, dict] = {
     "NATURALGAS": {"lot": "1250 MMBTU", "mult": 1250, "margin": 47748,   "rate": 14.93},
     "NICKEL":     {"lot": "250 KGS",    "mult": 250,  "margin": 46403,   "rate": 11.26},
     "SILVER":     {"lot": "30 KGS",     "mult": 30,   "margin": 940475,  "rate": 14.15},
+    "SILVER100":  {"lot": "100 GRMS",   "mult": 10,   "margin": 2893,    "rate": 12.96},
     "SILVERM":    {"lot": "5 KGS",      "mult": 5,    "margin": 149147,  "rate": 13.33},
     "SILVERMIC":  {"lot": "1 KGS",      "mult": 1,    "margin": 29755,   "rate": 13.30},
     "ZINC":       {"lot": "5 MT",       "mult": 5000, "margin": 179215,  "rate": 9.25},
@@ -60,7 +61,7 @@ _cache: dict = {"day": None, "data": None}
 
 _ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
 _CELL_RE = re.compile(r"<t[hd][^>]*>(.*?)</t[hd]>", re.S)
-_NAME_RE = re.compile(r"([A-Z]+)\s+\w+\s+\d{4}\s+Lot size\s+([\d.]+)\s+(\S+)")
+_NAME_RE = re.compile(r"([A-Z][A-Z0-9]*)\s+\w+\s+\d{4}\s+Lot size\s+([\d.]+)\s+(\S+)")
 
 
 def _round_mult(x: float) -> int:
@@ -73,7 +74,10 @@ def _round_mult(x: float) -> int:
 
 def load(force: bool = False) -> dict[str, dict]:
     """{COMMODITY: {lot, mult, margin, rate}} — live when reachable, else FALLBACK.
-    Only the NEAREST contract per commodity is kept (margins barely differ)."""
+    The HIGHEST margin across a commodity's listed months is kept: a calendar spread
+    holds two different expiries, and a far month can carry a bigger margin than the
+    near one (ALUMINI Aug 32,312 vs Oct 35,321), so budgeting on the cheapest row
+    would understate what the trade actually costs."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if not force and _cache["day"] == today and _cache["data"]:
         return _cache["data"]
@@ -89,7 +93,7 @@ def load(force: bool = False) -> dict[str, dict]:
             if len(cells) < 4:
                 continue
             m = _NAME_RE.match(cells[0])
-            if not m or m.group(1) in out:
+            if not m:
                 continue
             try:
                 margin = float(cells[1].replace(",", ""))
@@ -99,6 +103,9 @@ def load(force: bool = False) -> dict[str, dict]:
                 continue
             if not (margin and rate and price):
                 continue
+            prev = out.get(m.group(1))
+            if prev and prev["margin"] >= margin:
+                continue                      # keep the most expensive month
             out[m.group(1)] = {
                 "lot":    f"{float(m.group(2)):g} {m.group(3)}",
                 "mult":   _round_mult(margin / (rate * price)),
