@@ -17,7 +17,10 @@
 #    Token lasts until midnight IST; one click (or auto) reconnects next morning.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 REDIRECT_URI = "https://arshadshare.streamlit.app"
 
@@ -143,15 +146,26 @@ def get_depth(symbols: list[str], access_token: str) -> dict:
         return out
     try:
         fyers = get_fyers_model(access_token)
-        for i in range(0, len(symbols), 10):          # chunk: depth is heavier than quotes
-            chunk = symbols[i:i + 10]
+        # The depth endpoint takes ONE symbol per call (unlike quotes, which batch) and
+        # ohlcv_flag is an int. Passing a comma-joined list returns nothing.
+        for sym_req in symbols:
             try:
-                resp = fyers.depth({"symbol": ",".join(chunk), "ohlcv_flag": "1"})
-            except Exception:
+                resp = fyers.depth({"symbol": sym_req, "ohlcv_flag": 1})
+            except Exception as e:
+                logger.warning("depth call failed for %s: %s", sym_req, e)
                 continue
             if resp.get("s") != "ok" and resp.get("code") != 200:
+                logger.warning("depth %s -> %s", sym_req, resp.get("message") or resp.get("s"))
                 continue
-            for sym, d in (resp.get("d") or {}).items():
+            d_all = resp.get("d") or {}
+            # Single-symbol responses may return the depth directly rather than keyed.
+            items = (d_all.items() if isinstance(d_all, dict) and
+                     any(isinstance(v, dict) and ("bids" in v or "bid" in v)
+                         for v in d_all.values())
+                     else [(sym_req, d_all)])
+            for sym, d in items:
+                if not isinstance(d, dict):
+                    continue
                 # Fyers names the ask side "ask" (some versions "asks").
                 asks = d.get("ask") or d.get("asks") or []
                 bids = d.get("bids") or d.get("bid") or []

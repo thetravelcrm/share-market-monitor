@@ -68,10 +68,14 @@ CHARGE_RATE_PCT = 0.03
 # (distance to mid) and manufacturing opportunities that were never tradeable.
 BAND_LOW_PCT, BAND_HIGH_PCT = 0.02, 0.98
 
-# A calendar spread's band should be a small fraction of the outright price. Anything
-# wider than this is almost certainly bad data (stale prints / misaligned history),
-# so it is flagged and kept out of the opportunity list.
-MAX_PLAUSIBLE_BAND_PCT = 5.0
+# Detecting bad data by "band as a % of price" alone doesn't work: natural gas
+# calendar spreads are genuinely huge (seasonal winter premium), while crude's stale
+# prints are the real problem. The reliable signal is the SHAPE of the distribution —
+# clean data has (p98-p2) roughly 3-5x the interquartile range; stale prints create
+# fat tails and blow that ratio up. The %-of-price test is kept only as an absurdity
+# backstop at a level no real spread reaches.
+MAX_TAIL_RATIO = 8.0          # (p98-p2) / (p75-p25)
+MAX_PLAUSIBLE_BAND_PCT = 25.0
 
 _master_cache: dict = {"day": None, "data": None}
 
@@ -168,9 +172,11 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
             rng = band_max - band_min
             if rng <= 0:
                 continue
-            # Data-quality: an implausibly wide band means stale prints, not a real range.
+            # Data-quality: fat tails mean stale prints, not a real trading range.
             band_pct = rng / max(abs(n_px), 1e-9) * 100
-            suspect = band_pct > MAX_PLAUSIBLE_BAND_PCT
+            iqr = float(series.quantile(0.75) - series.quantile(0.25))
+            tail_ratio = rng / iqr if iqr > 1e-9 else float("inf")
+            suspect = tail_ratio > MAX_TAIL_RATIO or band_pct > MAX_PLAUSIBLE_BAND_PCT
             # How much of the raw range was outliers the percentile band trimmed away.
             outlier_trim = round(((raw_max - raw_min) - rng) / max(raw_max - raw_min, 1e-9) * 100)
             band_days = (series.index[-1] - series.index[0]).total_seconds() / 86400
@@ -222,6 +228,7 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 "band_min":  round(band_min, 2), "band_max": round(band_max, 2),
                 "band_days": round(band_days, 1),
                 "band_pct":     round(band_pct, 2),
+                "tail_ratio":   round(tail_ratio, 1) if tail_ratio != float("inf") else None,
                 "suspect":      suspect,
                 "outlier_trim": outlier_trim,
                 "pos":       round(pos),
