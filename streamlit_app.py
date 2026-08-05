@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.97"
-_APP_BUILD   = "05 Aug 2026 22:07"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.98"
+_APP_BUILD   = "05 Aug 2026 22:16"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4131,10 +4131,20 @@ with tab_scanner:
                        "unreachable. Check the app logs and retry.")
         else:
             _opps = _mcs.opportunities(_rows_sc, min_ratio=3.0)
+            _susp = [r for r in _rows_sc if r.get("suspect")]
             _thin = [r for r in _rows_sc
                      if r["bias"] in ("CHEAP", "RICH") and 1.5 <= (r["ratio"] or 0) < 3.0]
             st.caption(f"Scanned {len({r['commodity'] for r in _rows_sc})} commodities · "
                        f"{len(_rows_sc)} pairs · {st.session_state.get('sc_when', '')}")
+            if _susp:
+                st.warning(f"⚠️ **{len(_susp)} pair(s) excluded — untrustworthy band.** Their "
+                           f"band spans >{_mcs.MAX_PLAUSIBLE_BAND_PCT}% of the outright price, "
+                           f"which a calendar spread doesn't do: a thin far month printed a "
+                           f"stale price and blew the range out. Bands use the 2nd–98th "
+                           f"percentile to ignore such prints, and these are still too wide, "
+                           f"so they're ranked last and can't be opportunities: "
+                           + ", ".join(f"{r['commodity']} {r['pair']}" for r in _susp[:6])
+                           + ("…" if len(_susp) > 6 else ""))
             if _opps:
                 st.success(f"🎯 **{len(_opps)} opportunity(ies)** at a band extreme with "
                            f"edge ≥3× cost — best first below. Run the SILVERMIC-style "
@@ -4152,7 +4162,9 @@ with tab_scanner:
                 "Pair":      r["pair"],
                 "Near exp":  f"{r['near_dte']}d",
                 "Spread":    f"{r['spread']:,.2f}",
-                "Band":      f"{r['band_min']:,.0f} – {r['band_max']:,.0f} ({r['band_days']:.0f}d)",
+                "Band":      (f"{r['band_min']:,.0f} – {r['band_max']:,.0f} "
+                              f"({r['band_days']:.0f}d)"
+                              + (" ⚠️bad data" if r.get("suspect") else "")),
                 "Position":  f"{r['pos']}% · {r['bias']}",
                 "Edge/Cost": (f"{_icon.get(r['verdict'],'')} {r['ratio']}×"
                               if r["ratio"] is not None else "— no book"),

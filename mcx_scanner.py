@@ -59,9 +59,19 @@ ALL_COMMODITIES = ["SILVER100", "CRUDEOILM", "NATGASMINI", "ZINCMINI",
                    "NICKEL", "NATURALGAS", "LEAD", "GOLDM", "SILVERM",
                    "ALUMINIUM", "ZINC", "CRUDEOIL", "COPPER", "SILVER", "GOLD"]
 
-# All-in round-trip charges as a % of the combined (both legs) notional: brokerage,
-# CTT, exchange txn, stamp, GST. ~0.03% reproduces the ~₹130 we use for SILVERMIC.
+# All-in round-trip charges as a % of the combined (both legs) notional — legacy
+# fallback only; real charges now come from mcx_costs (exact, contract-note verified).
 CHARGE_RATE_PCT = 0.03
+
+# Bands use PERCENTILES, not min/max. A thin far month can print one stale price, and
+# with min/max that single print permanently widens the band, inflating "edge"
+# (distance to mid) and manufacturing opportunities that were never tradeable.
+BAND_LOW_PCT, BAND_HIGH_PCT = 0.02, 0.98
+
+# A calendar spread's band should be a small fraction of the outright price. Anything
+# wider than this is almost certainly bad data (stale prints / misaligned history),
+# so it is flagged and kept out of the opportunity list.
+MAX_PLAUSIBLE_BAND_PCT = 5.0
 
 _master_cache: dict = {"day": None, "data": None}
 
@@ -152,10 +162,17 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
             series = (hf - hn).dropna()          # aligns on shared 15m timestamps
             if len(series) < 50:
                 continue
-            band_min, band_max = float(series.min()), float(series.max())
+            raw_min, raw_max = float(series.min()), float(series.max())
+            band_min = float(series.quantile(BAND_LOW_PCT))
+            band_max = float(series.quantile(BAND_HIGH_PCT))
             rng = band_max - band_min
             if rng <= 0:
                 continue
+            # Data-quality: an implausibly wide band means stale prints, not a real range.
+            band_pct = rng / max(abs(n_px), 1e-9) * 100
+            suspect = band_pct > MAX_PLAUSIBLE_BAND_PCT
+            # How much of the raw range was outliers the percentile band trimmed away.
+            outlier_trim = round(((raw_max - raw_min) - rng) / max(raw_max - raw_min, 1e-9) * 100)
             band_days = (series.index[-1] - series.index[0]).total_seconds() / 86400
             mid = (band_min + band_max) / 2
             pos = max(0.0, min(100.0, (spread_now - band_min) / rng * 100))
@@ -204,6 +221,9 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 "spread":    round(spread_now, 2),
                 "band_min":  round(band_min, 2), "band_max": round(band_max, 2),
                 "band_days": round(band_days, 1),
+                "band_pct":     round(band_pct, 2),
+                "suspect":      suspect,
+                "outlier_trim": outlier_trim,
                 "pos":       round(pos),
                 "bias":      bias,
                 "edge":      round(edge, 2),
@@ -263,7 +283,8 @@ def scan(token: str, commodities: list[str] | None = None, lookback_days: int = 
         except Exception as e:
             logger.warning("scan failed for %s: %s", c, e)
     rank = {"GOOD": 0, "THIN": 1, "NO_EDGE": 2, "UNKNOWN": 3}
-    rows.sort(key=lambda r: (0 if r["bias"] in ("CHEAP", "RICH") else 1,
+    rows.sort(key=lambda r: (1 if r.get("suspect") else 0,
+                             0 if r["bias"] in ("CHEAP", "RICH") else 1,
                              rank.get(r["verdict"], 9),
                              -(r["roi_pct"] or 0), -(r["ratio"] or 0)))
     return rows
@@ -275,6 +296,7 @@ def opportunities(rows: list[dict], min_ratio: float = 3.0) -> list[dict]:
     opportunity."""
     return [r for r in rows
             if r["bias"] in ("CHEAP", "RICH") and (r["ratio"] or 0) >= min_ratio
+            and not r.get("suspect")
             and (not r.get("depth_used") or (r.get("fillable_lots") or 0) >= r.get("lots", 1))]
 
 
