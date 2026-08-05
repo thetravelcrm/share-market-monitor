@@ -17,10 +17,13 @@
 #     mature band on the FIRST scan, for every pair, and it can't be corrupted by a
 #     lost state file.
 #
-#  Sizing note: MCX contract sizes (kg / barrels / mmBtu per lot) are NOT in the
-#  symbol master and published sources disagree, so this module never guesses them.
-#  Everything is per PRICE UNIT, and the ratio edge/cost is unit-free — which is what
-#  ranking needs. ₹-per-lot is shown only for commodities in CONTRACT_UNITS below.
+#  3. SIZING AND CAPITAL come from Zerodha's own margin calculator (zerodha_margins):
+#     the ₹ multiplier per lot is derived exactly from margin = rate × price × mult,
+#     and the NRML margin gives capital required. That turns the ranking into RETURN
+#     ON MARGIN — the only fair way to compare a ₹30k-margin silver spread against a
+#     ₹450k-margin crude spread.
+#
+#  SILVERMIC is intentionally excluded: it has its own tab.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -31,20 +34,19 @@ from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 
+import zerodha_margins as _zm
+
 logger = logging.getLogger(__name__)
 
 _MASTER_URL = "https://public.fyers.in/sym_details/MCX_COM_sym_master.json"
 
 # Liquid, multi-expiry commodities worth scanning by default.
-LIQUID_DEFAULT = ["SILVERMIC", "GOLDM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC"]
-ALL_COMMODITIES = ["SILVERMIC", "SILVERM", "SILVER", "GOLDM", "GOLD",
+# SILVERMIC is deliberately absent — it has its own dedicated tab with accumulated
+# bands, alerts and the AI gate. The scanner covers everything else.
+LIQUID_DEFAULT = ["SILVERM", "GOLDM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC"]
+ALL_COMMODITIES = ["SILVERM", "SILVER", "GOLDM", "GOLD",
                    "CRUDEOIL", "CRUDEOILM", "NATURALGAS",
                    "COPPER", "ZINC", "ALUMINIUM", "LEAD", "NICKEL"]
-
-# Units per lot — ONLY entries verified against a real fill. SILVERMIC is 1 kg/lot,
-# confirmed to the rupee against a live Fyers position. Add others yourself after
-# checking your own contract note; anything absent shows as "per unit" instead of ₹.
-CONTRACT_UNITS: dict[str, float] = {"SILVERMIC": 1.0}
 
 # All-in round-trip charges as a % of the combined (both legs) notional: brokerage,
 # CTT, exchange txn, stamp, GST. ~0.03% reproduces the ~₹130 we use for SILVERMIC.
@@ -159,7 +161,14 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 bias, idea = "RICH", "SHORT spread (sell far · buy near)"
             else:
                 bias, idea = "FAIR", "wait"
-            units = CONTRACT_UNITS.get(commodity)
+            units = _zm.multiplier(commodity)
+            margin_lot = _zm.margin_per_lot(commodity)
+            # Both legs are held, so worst-case capital = 2 lots. MCX/Zerodha grant a
+            # calendar-spread benefit that cuts this a lot — confirm in a Kite basket.
+            margin_spread = None if margin_lot is None else margin_lot * 2
+            edge_inr = None if units is None else edge * units
+            roi = (None if (edge_inr is None or not margin_spread)
+                   else edge_inr / margin_spread * 100)
             rows.append({
                 "commodity": commodity,
                 "pair":      f"{far['label']} − {near['label']}",
@@ -175,9 +184,11 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 "ratio":     None if ratio is None else round(ratio, 1),
                 "verdict":   "UNKNOWN" if ratio is None else _verdict(ratio),
                 "idea":      idea if bias != "FAIR" else "—",
-                "units":     units,
-                "edge_inr":  None if units is None else round(edge * units, 0),
-                "cost_inr":  None if (units is None or cost is None) else round(cost * units, 0),
+                "units":         units,
+                "edge_inr":      None if edge_inr is None else round(edge_inr, 0),
+                "cost_inr":      None if (units is None or cost is None) else round(cost * units, 0),
+                "margin_spread": None if margin_spread is None else round(margin_spread),
+                "roi_pct":       None if roi is None else round(roi, 2),
             })
     return rows
 
@@ -203,7 +214,8 @@ def scan(token: str, commodities: list[str] | None = None, lookback_days: int = 
             logger.warning("scan failed for %s: %s", c, e)
     rank = {"GOOD": 0, "THIN": 1, "NO_EDGE": 2, "UNKNOWN": 3}
     rows.sort(key=lambda r: (0 if r["bias"] in ("CHEAP", "RICH") else 1,
-                             rank.get(r["verdict"], 9), -(r["ratio"] or 0)))
+                             rank.get(r["verdict"], 9),
+                             -(r["roi_pct"] or 0), -(r["ratio"] or 0)))
     return rows
 
 
@@ -214,7 +226,9 @@ def opportunities(rows: list[dict], min_ratio: float = 3.0) -> list[dict]:
 
 
 def alert_text(r: dict) -> str:
-    inr = (f" (₹{r['edge_inr']:,.0f} edge / ₹{r['cost_inr']:,.0f} cost per lot)"
+    inr = (f" (₹{r['edge_inr']:,.0f} edge / ₹{r['cost_inr']:,.0f} cost per lot"
+           + (f", {r['roi_pct']}% on ₹{r['margin_spread']:,.0f} margin)"
+              if r.get("roi_pct") is not None else ")")
            if r.get("edge_inr") is not None else " per price unit")
     return (f"🔎 SPREAD OPPORTUNITY — {r['commodity']} {r['pair']}: {r['spread']:,.2f} "
             f"at {r['pos']}% of its {r['band_days']:.0f}d band ({r['bias']}) · "
