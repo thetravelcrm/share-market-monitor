@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.99"
-_APP_BUILD   = "05 Aug 2026 22:36"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.100"
+_APP_BUILD   = "05 Aug 2026 22:48"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4146,10 +4146,32 @@ with tab_scanner:
                            + ", ".join(f"{r['commodity']} {r['pair']}" for r in _susp[:6])
                            + ("…" if len(_susp) > 6 else ""))
             if _opps:
-                st.success(f"🎯 **{len(_opps)} opportunity(ies)** at a band extreme with "
-                           f"edge ≥3× cost — best first below. Run the SILVERMIC-style "
-                           f"checks before trading: is the band trustworthy, and can you "
-                           f"actually get filled on both legs?")
+                _by_com: dict = {}
+                for _o in _opps:
+                    _by_com.setdefault(_o["commodity"], []).append(_o)
+                st.success(f"🎯 **{len(_opps)} opportunity(ies)** across {len(_by_com)} "
+                           f"commodity(ies) at a band extreme with edge ≥3× cost — "
+                           f"best first below.")
+                _dupes = {c: v for c, v in _by_com.items() if len(v) > 1}
+                if _dupes:
+                    st.warning("🔗 **Fewer bets than they look.** Pairs from the same "
+                               "commodity share legs, so they move together — taking them "
+                               "all is one trade multiplied, not diversification. Trade the "
+                               "best one per commodity: "
+                               + " · ".join(
+                                   f"**{c}** ({len(v)} pairs → "
+                                   f"{max(v, key=lambda r: r.get('roi_pct') or 0)['pair']})"
+                                   for c, v in _dupes.items()))
+                _seas = sorted({o["commodity"] for o in _opps if o.get("seasonal_risk")})
+                if _seas:
+                    st.error("🌦️ **Seasonality warning — " + ", ".join(_seas) + ".** These "
+                             "calendar spreads are driven by a seasonal term structure "
+                             "(natural gas carries a winter premium: Nov/Dec over Aug/Sep). "
+                             "That premium is structural and typically **widens into "
+                             "winter** — it is not noise that reverts. Your band lookback "
+                             "is shorter than a season, so it cannot see the pattern it "
+                             "would be betting against. Treat 'RICH' here as *expected*, "
+                             "not as an edge; backtest at 180d+ before shorting it.")
             elif _thin:
                 st.info(f"⚠️ {len(_thin)} thin setup(s) (1.5–3× cost) — half size at most, "
                         f"nothing at full conviction right now.")

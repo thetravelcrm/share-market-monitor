@@ -77,6 +77,14 @@ BAND_LOW_PCT, BAND_HIGH_PCT = 0.02, 0.98
 MAX_TAIL_RATIO = 8.0          # (p98-p2) / (p75-p25)
 MAX_PLAUSIBLE_BAND_PCT = 25.0
 
+# Commodities whose calendar spread is driven by a SEASONAL term structure rather than
+# by noise that reverts. Natural gas carries a winter heating premium — Nov/Dec over
+# Aug/Sep is structural and typically WIDENS into winter. A lookback shorter than a
+# season cannot see that, so "rich vs the last 30 days" is a trap: shorting it bets
+# against the season instead of fading an anomaly.
+SEASONAL_COMMODITIES = {"NATURALGAS", "NATGASMINI", "KAPAS", "COTTON", "MENTHAOIL"}
+SEASONAL_MIN_LOOKBACK_DAYS = 180
+
 _master_cache: dict = {"day": None, "data": None}
 
 
@@ -229,7 +237,9 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 "band_days": round(band_days, 1),
                 "band_pct":     round(band_pct, 2),
                 "tail_ratio":   round(tail_ratio, 1) if tail_ratio != float("inf") else None,
-                "suspect":      suspect,
+                "suspect":       suspect,
+                "seasonal_risk": (commodity in SEASONAL_COMMODITIES
+                                  and lookback_days < SEASONAL_MIN_LOOKBACK_DAYS),
                 "outlier_trim": outlier_trim,
                 "pos":       round(pos),
                 "bias":      bias,
