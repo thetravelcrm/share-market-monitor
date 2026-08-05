@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.94"
-_APP_BUILD   = "05 Aug 2026 20:58"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.95"
+_APP_BUILD   = "05 Aug 2026 21:05"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4076,9 +4076,25 @@ with tab_scanner:
         st.info("🔌 Connect Fyers in the sidebar to run the scanner.")
     else:
         import mcx_scanner as _mcs
+        import zerodha_margins as _zmg
+        _scm1, _scm2 = st.columns([1, 3])
+        _sc_budget = _scm1.number_input("Max margin per leg (₹)", 1000, 2_000_000,
+                                        int(_mcs.MARGIN_BUDGET_DEFAULT), step=5000,
+                                        key="sc_budget",
+                                        help="Single-leg NRML margin from Zerodha. A spread "
+                                             "holds 2 legs, so capital is up to 2× this "
+                                             "(less with MCX's calendar-spread benefit).")
+        _sc_keep, _sc_drop = _mcs.affordable(float(_sc_budget))
+        _scm2.caption(
+            f"**Within budget ({len(_sc_keep)}):** " +
+            ", ".join(f"{c} ₹{_zmg.margin_per_lot(c):,.0f}" for c in _sc_keep[:10]) +
+            (f" …+{len(_sc_keep)-10} more" if len(_sc_keep) > 10 else "") +
+            (f"  ·  **excluded ({len(_sc_drop)}):** " + ", ".join(_sc_drop[:6]) +
+             ("…" if len(_sc_drop) > 6 else "") if _sc_drop else ""))
         _sc1, _sc2, _sc3 = st.columns([3, 1, 1])
+        _sc_default = [c for c in _mcs.LIQUID_DEFAULT if c in _sc_keep] or _sc_keep[:6]
         _sc_sel = _sc1.multiselect("Commodities", _mcs.ALL_COMMODITIES,
-                                   default=_mcs.LIQUID_DEFAULT, key="sc_sel")
+                                   default=_sc_default, key="sc_sel")
         _sc_lb = _sc2.number_input("Band lookback (d)", 10, 90, 30, step=5, key="sc_lb")
         _sc_dte = _sc3.number_input("Skip expiry < (d)", 1, 40, 11, step=1, key="sc_dte")
         if st.button("🔎 Scan now", key="sc_run", type="primary"):
@@ -4089,7 +4105,7 @@ with tab_scanner:
                 try:
                     _sc_rows = _mcs.scan(
                         _sc_token, commodities=_sc_sel, lookback_days=int(_sc_lb),
-                        min_dte=int(_sc_dte),
+                        min_dte=int(_sc_dte), max_margin=float(_sc_budget),
                         progress=lambda f, t: _bar.progress(min(f, 1.0), text=t))
                     st.session_state["sc_rows"] = _sc_rows
                     st.session_state["sc_when"] = datetime.now(

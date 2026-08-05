@@ -40,13 +40,21 @@ logger = logging.getLogger(__name__)
 
 _MASTER_URL = "https://public.fyers.in/sym_details/MCX_COM_sym_master.json"
 
-# Liquid, multi-expiry commodities worth scanning by default.
-# SILVERMIC is deliberately absent — it has its own dedicated tab with accumulated
-# bands, alerts and the AI gate. The scanner covers everything else.
-LIQUID_DEFAULT = ["SILVERM", "GOLDM", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC"]
-ALL_COMMODITIES = ["SILVERM", "SILVER", "GOLDM", "GOLD",
-                   "CRUDEOIL", "CRUDEOILM", "NATURALGAS",
-                   "COPPER", "ZINC", "ALUMINIUM", "LEAD", "NICKEL"]
+# Most MCX contracts need lakhs of margin per leg. These are the MINI contracts —
+# same underlying, small lot — whose single-leg NRML margin fits a retail budget and
+# which still have enough listed expiries for calendar spreads. SILVERMIC (₹29.8k,
+# the cheapest of all) is deliberately absent: it has its own dedicated tab.
+MARGIN_BUDGET_DEFAULT = 40_000.0
+
+# Affordable AND reasonably liquid — the sensible default scan set.
+LIQUID_DEFAULT = ["CRUDEOILM", "NATGASMINI", "ZINCMINI", "ALUMINI", "LEADMINI", "GOLDTEN"]
+
+# Everything worth offering; the margin budget decides what actually gets scanned.
+# (Thin/seasonal ones like GOLDPETAL, STEELREBAR, KAPAS are selectable but not default.)
+ALL_COMMODITIES = ["CRUDEOILM", "NATGASMINI", "ZINCMINI", "ALUMINI", "LEADMINI",
+                   "GOLDTEN", "GOLDGUINEA", "GOLDPETAL", "STEELREBAR", "KAPAS",
+                   "NICKEL", "NATURALGAS", "LEAD", "GOLDM", "SILVERM",
+                   "ALUMINIUM", "ZINC", "CRUDEOIL", "COPPER", "SILVER", "GOLD"]
 
 # All-in round-trip charges as a % of the combined (both legs) notional: brokerage,
 # CTT, exchange txn, stamp, GST. ~0.03% reproduces the ~₹130 we use for SILVERMIC.
@@ -193,12 +201,31 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
     return rows
 
 
+def affordable(budget: float = MARGIN_BUDGET_DEFAULT,
+               commodities: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """Split commodities into (within budget, too expensive) by single-leg NRML margin.
+    A spread holds TWO legs, so real capital is up to 2x this (less with MCX's
+    calendar-spread benefit)."""
+    keep, drop = [], []
+    for c in (commodities or ALL_COMMODITIES):
+        m = _zm.margin_per_lot(c)
+        (keep if (m is not None and m <= budget) else drop).append(c)
+    return keep, drop
+
+
 def scan(token: str, commodities: list[str] | None = None, lookback_days: int = 30,
          min_dte: int = 11, charge_rate: float = CHARGE_RATE_PCT,
-         progress=None) -> list[dict]:
+         max_margin: float | None = MARGIN_BUDGET_DEFAULT, progress=None) -> list[dict]:
     """Scan several commodities and return every pair, best opportunity first
-    (tradeable extremes with a payable edge rank above everything else)."""
+    (tradeable extremes with a payable edge rank above everything else).
+    `max_margin` drops anything whose single-leg margin exceeds the budget."""
     commodities = commodities or LIQUID_DEFAULT
+    if max_margin:
+        commodities, _skipped = affordable(max_margin, commodities)
+        if _skipped:
+            logger.info("skipped (margin > %.0f): %s", max_margin, ", ".join(_skipped))
+    if not commodities:
+        return []
     master = load_master()
     if not master:
         return []
