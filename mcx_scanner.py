@@ -34,6 +34,7 @@ from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 
+import mcx_costs as _mcc
 import zerodha_margins as _zm
 
 logger = logging.getLogger(__name__)
@@ -122,14 +123,17 @@ def _verdict(ratio: float) -> str:
 
 def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                    min_dte: int = 11, charge_rate: float = CHARGE_RATE_PCT,
-                   master: dict | None = None) -> list[dict]:
+                   master: dict | None = None, lots: int = 1) -> list[dict]:
     """Every tradeable calendar pair for one commodity, scored. See scan()."""
+    from fyers_fetcher import get_depth
     from silvermic_spread import quote_many
     contracts = list_futures(commodity, min_dte=min_dte, master=master)
     if len(contracts) < 2:
         return []
 
-    quotes = quote_many([c["symbol"] for c in contracts], token)
+    syms = [c["symbol"] for c in contracts]
+    quotes = quote_many(syms, token)
+    depth = get_depth(syms, token)          # ladder, so `lots` can be priced honestly
     hist = {c["symbol"]: _history(token, c["symbol"], lookback_days) for c in contracts}
 
     rows = []
@@ -157,12 +161,25 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
             pos = max(0.0, min(100.0, (spread_now - band_min) / rng * 100))
             edge = abs(spread_now - mid)
 
-            # Real cost per price unit: cross both legs' books + all-in charges.
-            widths = [q.get("ask", 0) - q.get("bid", 0) for q in (nq, fq)]
-            book = sum(w for w in widths if w > 0)
-            if not book or any(w <= 0 for w in widths):
-                book = None                       # unknown book -> can't cost it
-            cost = None if book is None else book + (n_px + f_px) * charge_rate / 100
+            # ── Real cost for the size you intend to trade ──────────────────
+            # Preferred: walk both ladders for `lots` and add exact Zerodha charges
+            # (verified against a live contract note). Falls back to the touch when
+            # depth is unavailable, which UNDERSTATES cost — flagged as such.
+            mult_c = _zm.multiplier(commodity) or 1.0
+            nd, fd = depth.get(near["symbol"]), depth.get(far["symbol"])
+            cost = fillable = None
+            depth_used = False
+            if nd and fd:
+                ec = _mcc.execution_cost(nd, fd, lots, mult_c)
+                fillable = ec.get("fillable_lots")
+                if ec.get("fillable"):
+                    cost = ec["total_per_unit"]
+                    depth_used = True
+            if cost is None:
+                widths = [q.get("ask", 0) - q.get("bid", 0) for q in (nq, fq)]
+                if all(w > 0 for w in widths):
+                    charges = _mcc.spread_round_trip_charges(n_px * mult_c, f_px * mult_c)
+                    cost = sum(widths) + charges / mult_c
             ratio = None if not cost else edge / cost
 
             if pos <= 25:
@@ -171,7 +188,7 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 bias, idea = "RICH", "SHORT spread (sell far · buy near)"
             else:
                 bias, idea = "FAIR", "wait"
-            units = _zm.multiplier(commodity)
+            units = mult_c
             margin_lot = _zm.margin_per_lot(commodity)
             # Both legs are held, so worst-case capital = 2 lots. MCX/Zerodha grant a
             # calendar-spread benefit that cuts this a lot — confirm in a Kite basket.
@@ -193,6 +210,9 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
                 "cost":      None if cost is None else round(cost, 2),
                 "ratio":     None if ratio is None else round(ratio, 1),
                 "verdict":   "UNKNOWN" if ratio is None else _verdict(ratio),
+                "lots":          lots,
+                "depth_used":    depth_used,
+                "fillable_lots": fillable,
                 "idea":      idea if bias != "FAIR" else "—",
                 "units":         units,
                 "edge_inr":      None if edge_inr is None else round(edge_inr, 0),
@@ -217,7 +237,8 @@ def affordable(budget: float = MARGIN_BUDGET_DEFAULT,
 
 def scan(token: str, commodities: list[str] | None = None, lookback_days: int = 30,
          min_dte: int = 11, charge_rate: float = CHARGE_RATE_PCT,
-         max_margin: float | None = MARGIN_BUDGET_DEFAULT, progress=None) -> list[dict]:
+         max_margin: float | None = MARGIN_BUDGET_DEFAULT, lots: int = 1,
+         progress=None) -> list[dict]:
     """Scan several commodities and return every pair, best opportunity first
     (tradeable extremes with a payable edge rank above everything else).
     `max_margin` drops anything whose single-leg margin exceeds the budget."""
@@ -238,7 +259,7 @@ def scan(token: str, commodities: list[str] | None = None, lookback_days: int = 
         try:
             rows.extend(scan_commodity(token, c, lookback_days=lookback_days,
                                        min_dte=min_dte, charge_rate=charge_rate,
-                                       master=master))
+                                       master=master, lots=lots))
         except Exception as e:
             logger.warning("scan failed for %s: %s", c, e)
     rank = {"GOOD": 0, "THIN": 1, "NO_EDGE": 2, "UNKNOWN": 3}
@@ -249,9 +270,12 @@ def scan(token: str, commodities: list[str] | None = None, lookback_days: int = 
 
 
 def opportunities(rows: list[dict], min_ratio: float = 3.0) -> list[dict]:
-    """Actionable subset: at a band extreme AND the edge pays its own friction."""
+    """Actionable subset: at a band extreme, the edge pays its own friction, AND the
+    book can actually fill the intended size — an edge nobody will trade is not an
+    opportunity."""
     return [r for r in rows
-            if r["bias"] in ("CHEAP", "RICH") and (r["ratio"] or 0) >= min_ratio]
+            if r["bias"] in ("CHEAP", "RICH") and (r["ratio"] or 0) >= min_ratio
+            and (not r.get("depth_used") or (r.get("fillable_lots") or 0) >= r.get("lots", 1))]
 
 
 def alert_text(r: dict) -> str:

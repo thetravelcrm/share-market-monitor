@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.96"
-_APP_BUILD   = "05 Aug 2026 21:08"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.97"
+_APP_BUILD   = "05 Aug 2026 22:07"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4096,7 +4096,13 @@ with tab_scanner:
         _sc_sel = _sc1.multiselect("Commodities", _mcs.ALL_COMMODITIES,
                                    default=_sc_default, key="sc_sel")
         _sc_lb = _sc2.number_input("Band lookback (d)", 10, 90, 30, step=5, key="sc_lb")
-        _sc_dte = _sc3.number_input("Skip expiry < (d)", 1, 40, 11, step=1, key="sc_dte")
+        _sc_lots = _sc3.number_input("Lots you'd trade", 1, 50, 1, step=1, key="sc_lots",
+                                     help="Cost is priced by WALKING the order book for "
+                                          "this size — a 10-lot fill pays far more than "
+                                          "the top-of-book spread. Setups the book can't "
+                                          "fill are dropped from opportunities.")
+        _sc_dte = st.number_input("Skip contracts expiring within (days)", 1, 40, 11,
+                                  step=1, key="sc_dte")
         if st.button("🔎 Scan now", key="sc_run", type="primary"):
             if not _sc_sel:
                 st.warning("Pick at least one commodity.")
@@ -4106,6 +4112,7 @@ with tab_scanner:
                     _sc_rows = _mcs.scan(
                         _sc_token, commodities=_sc_sel, lookback_days=int(_sc_lb),
                         min_dte=int(_sc_dte), max_margin=float(_sc_budget),
+                        lots=int(_sc_lots),
                         progress=lambda f, t: _bar.progress(min(f, 1.0), text=t))
                     st.session_state["sc_rows"] = _sc_rows
                     st.session_state["sc_when"] = datetime.now(
@@ -4157,6 +4164,9 @@ with tab_scanner:
                               else "—"),
                 "Return on margin": (f"{r['roi_pct']}%" if r.get("roi_pct") is not None
                                      else "—"),
+                "Can fill?": ("—" if not r.get("depth_used")
+                              else ("✅" if (r.get("fillable_lots") or 0) >= r.get("lots", 1)
+                                    else f"❌ only {r.get('fillable_lots', 0)}")),
                 "Idea":      r["idea"],
             } for r in _rows_sc]), use_container_width=True, hide_index=True, height=420)
             st.caption("**Edge/Cost** decides *whether* to trade (unit-free, so it compares "
@@ -4167,7 +4177,11 @@ with tab_scanner:
                        "₹ figures use Zerodha's published lot multipliers; **Margin ₹ is the "
                        "worst case (2 single-leg NRML margins)** — MCX grants a calendar-spread "
                        "benefit that cuts it substantially, so check a Kite basket order for "
-                       "the real number.")
+                       "the real number. **Cost is priced by walking the real order book for "
+                       "your lot size** and adds exact Zerodha charges (model verified to the "
+                       "paisa against a live contract note), so a big edge on a book that "
+                       "can't fill you is excluded rather than advertised — **Can fill?** "
+                       "shows when depth is short.")
             if _opps:
                 with st.expander("📋 Copy-ready opportunity list"):
                     for r in _opps:

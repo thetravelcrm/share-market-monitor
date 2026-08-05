@@ -131,6 +131,50 @@ def get_positions(access_token: str) -> Optional[dict]:
         return None
 
 
+def get_depth(symbols: list[str], access_token: str) -> dict:
+    """
+    Full market depth (5 levels) for MCX/NSE symbols — the ladder, not just the touch,
+    so order size can be priced honestly.
+    Returns {symbol: {"bids": [{price, volume}…], "asks": [{price, volume}…]}}.
+    Missing/failed symbols are simply absent.
+    """
+    out: dict = {}
+    if not symbols:
+        return out
+    try:
+        fyers = get_fyers_model(access_token)
+        for i in range(0, len(symbols), 10):          # chunk: depth is heavier than quotes
+            chunk = symbols[i:i + 10]
+            try:
+                resp = fyers.depth({"symbol": ",".join(chunk), "ohlcv_flag": "1"})
+            except Exception:
+                continue
+            if resp.get("s") != "ok" and resp.get("code") != 200:
+                continue
+            for sym, d in (resp.get("d") or {}).items():
+                # Fyers names the ask side "ask" (some versions "asks").
+                asks = d.get("ask") or d.get("asks") or []
+                bids = d.get("bids") or d.get("bid") or []
+                def _lvls(raw):
+                    out_l = []
+                    for lv in raw or []:
+                        try:
+                            px, vol = float(lv.get("price", 0)), int(lv.get("volume", 0))
+                        except Exception:
+                            continue
+                        if px > 0 and vol > 0:
+                            out_l.append({"price": px, "volume": vol})
+                    return out_l
+                b, a = _lvls(bids), _lvls(asks)
+                if b and a:
+                    b.sort(key=lambda x: -x["price"])   # best bid first
+                    a.sort(key=lambda x: x["price"])    # best ask first
+                    out[sym] = {"bids": b, "asks": a}
+    except Exception:
+        pass
+    return out
+
+
 def is_auto_login_configured() -> bool:
     """True if FYERS_ID, TOTP secret + PIN are present (Streamlit secrets or env)."""
     return bool(
