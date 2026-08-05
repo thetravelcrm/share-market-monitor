@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.91"
-_APP_BUILD   = "04 Aug 2026 21:06"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.92"
+_APP_BUILD   = "05 Aug 2026 19:56"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3694,7 +3694,7 @@ def _render_spreads(token: str):
             st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
 
         # ── 🔔 Per-pair threshold alerts (watched here every 60s AND by the 24/7 cron) ──
-        st.markdown("##### 🔔 Step 4 — Alerts (Slack, watched 24/7)")
+        st.markdown("##### 🔔 Step 3 — Alerts (Slack, watched 24/7)")
         with st.expander("Set spread levels + position P&L alerts", expanded=False):
             try:
                 _acfg = _sps.get_alert_config()
@@ -3746,7 +3746,7 @@ def _render_spreads(token: str):
                        "caught. Uses the same Slack token/channel as the SILVERMIC tab.")
 
         # ── 💼 Live Fyers positions + your ACTUAL spread P&L ──────────────────
-        st.markdown("##### 💼 Step 3 — My live position (honest P&L)")
+        st.markdown("##### 💼 Step 4 — My live position (honest P&L)")
         _pos_err = None
         try:
             from fyers_fetcher import get_positions as _fy_positions
@@ -3884,6 +3884,126 @@ def _render_spreads(token: str):
         else:
             st.caption("No stored spread history yet — it fills in once the market opens "
                        "(or run the 24/7 cron).")
+
+    # ── 🧪 Step 5 — Backtest: does this rule actually pay after friction? ──
+    st.markdown("##### 🧪 Step 5 — Backtest the rule (walk-forward, friction included)")
+    with st.expander("Test the mean-reversion rule on real Fyers history", expanded=False):
+        try:
+            _bt_pairs = _sps.pair_symbols()
+        except Exception as _bpe:
+            _bt_pairs = []
+            st.caption(f"pair list unavailable: {_bpe}")
+        if not _bt_pairs:
+            st.caption("No tradeable pairs to test right now.")
+        else:
+            _b1, _b2, _b3 = st.columns([2, 1, 1])
+            _bt_pair = _b1.selectbox("Pair", [p["label"] for p in _bt_pairs], key="bt_pair")
+            _bt_days = _b2.number_input("History (days)", 60, 365, 180, step=30, key="bt_days")
+            _bt_cost = _b3.number_input("Round-trip cost (₹)", 50, 2000, 300, step=50,
+                                        key="bt_cost",
+                                        help="Both legs' bid-ask width + charges. Historical "
+                                             "books aren't available, so this is charged flat.")
+            _b4, _b5, _b6 = st.columns(3)
+            _bt_lb    = _b4.number_input("Band lookback (days)", 10, 90, 30, step=5, key="bt_lb")
+            _bt_entry = _b5.number_input("Entry at ≤x% / ≥100−x%", 5.0, 40.0, 20.0,
+                                         step=5.0, key="bt_entry")
+            _bt_hold  = _b6.number_input("Max hold (days)", 1, 30, 10, step=1, key="bt_hold")
+            _br1, _br2 = st.columns(2)
+            _bt_run = _br1.button("▶️ Run backtest", key="bt_run")
+            _bt_opt = _br2.button("🔍 Find best settings", key="bt_opt",
+                                  help="Grid-search lookback × entry threshold")
+            if _bt_run or _bt_opt:
+                _sel_bt = next(p for p in _bt_pairs if p["label"] == _bt_pair)
+                import spread_backtest as _sbt
+                with st.spinner(f"Fetching {int(_bt_days)}d of history for both legs…"):
+                    _ser = _sbt.fetch_spread_series(token, _sel_bt["near_hist"],
+                                                    _sel_bt["far_hist"], days=int(_bt_days))
+                if _ser is None or _ser.empty:
+                    st.error("No history returned for this pair — a recently listed contract "
+                             "may not have data that far back. Try fewer days.")
+                    st.session_state.pop("bt_res", None)
+                    st.session_state.pop("bt_opt_res", None)
+                else:
+                    _span = (_ser.index[-1] - _ser.index[0]).days
+                    st.session_state["bt_span"] = (
+                        f"{len(_ser):,} bars · {_span} days "
+                        f"({_ser.index[0]:%d %b %Y} → {_ser.index[-1]:%d %b %Y})")
+                    if _bt_opt:
+                        with st.spinner("Grid-searching lookback × entry threshold…"):
+                            st.session_state["bt_opt_res"] = _sbt.optimize(
+                                _ser, cost=float(_bt_cost), max_hold_days=int(_bt_hold))
+                        st.session_state.pop("bt_res", None)
+                    else:
+                        with st.spinner("Simulating walk-forward…"):
+                            st.session_state["bt_res"] = _sbt.backtest(
+                                _ser, lookback_days=int(_bt_lb), entry_pct=float(_bt_entry),
+                                cost=float(_bt_cost), max_hold_days=int(_bt_hold))
+                        st.session_state.pop("bt_opt_res", None)
+
+            if st.session_state.get("bt_span"):
+                st.caption(st.session_state["bt_span"])
+
+            _btr = st.session_state.get("bt_res")
+            if _btr and _btr.get("error"):
+                st.warning(_btr["error"])
+            elif _btr:
+                _m = _btr["metrics"]
+                if _m["trades"] < 5:
+                    st.warning(f"⚠️ Only {_m['trades']} trade(s) — too few to conclude "
+                               f"anything. Use more history or a looser entry threshold.")
+                elif _m["expectancy"] > 0:
+                    st.success(f"🟢 **Edge confirmed on this data** — ₹{_m['expectancy']:,.0f} "
+                               f"expected per trade after ₹{int(_bt_cost)} friction, over "
+                               f"{_m['trades']} trades. Past behaviour, not a promise.")
+                else:
+                    st.error(f"🔴 **No edge on this data** — ₹{_m['expectancy']:,.0f} per trade "
+                             f"after friction. Don't trade this pair/setting.")
+                _mc = st.columns(6)
+                _mc[0].metric("Trades", _m["trades"])
+                _mc[1].metric("Win rate", f"{_m['win_rate']}%")
+                _mc[2].metric("Per trade", f"₹{_m['expectancy']:,.0f}")
+                _mc[3].metric("Total P&L", f"₹{_m['total_pnl']:,.0f}")
+                _mc[4].metric("Max drawdown", f"₹{_m['max_drawdown']:,.0f}")
+                _mc[5].metric("Per month", f"{_m['trades_per_month']} trades")
+                st.caption(f"Avg win ₹{_m['avg_win']:,.0f} · avg loss ₹{_m['avg_loss']:,.0f} · "
+                           f"profit factor {_m['profit_factor']} · avg hold "
+                           f"{_m['avg_hold_days']}d · P&L is ₹ per **1 lot pair**.")
+                if _btr.get("equity"):
+                    _eq = pd.DataFrame(_btr["equity"]).set_index("time")
+                    st.line_chart(_eq, height=200)
+                if _btr.get("trades"):
+                    with st.expander(f"All {len(_btr['trades'])} simulated trades"):
+                        st.dataframe(pd.DataFrame([{
+                            "Side": t["side"],
+                            "Entered": pd.Timestamp(t["entry_time"]).strftime("%d %b %H:%M"),
+                            "Exited":  pd.Timestamp(t["exit_time"]).strftime("%d %b %H:%M"),
+                            "Entry ₹": t["entry"], "Exit ₹": t["exit"],
+                            "Gross ₹": t["gross"], "Net ₹": t["pnl"],
+                            "Held (d)": t["hold_days"], "Exit reason": t["reason"],
+                        } for t in _btr["trades"]]),
+                            use_container_width=True, hide_index=True)
+
+            _bto = st.session_state.get("bt_opt_res")
+            if _bto is not None:
+                if not _bto:
+                    st.warning("No setting produced at least 5 trades on this history — "
+                               "the band rule has too few opportunities here.")
+                else:
+                    st.markdown("**Best settings by total P&L** (≥5 trades):")
+                    st.dataframe(pd.DataFrame([{
+                        "Lookback (d)": r["lookback_days"], "Entry %": r["entry_pct"],
+                        "Trades": r["trades"], "Win %": r["win_rate"],
+                        "Per trade ₹": r["expectancy"], "Total ₹": r["total_pnl"],
+                        "Max DD ₹": r["max_drawdown"], "Trades/mo": r["trades_per_month"],
+                    } for r in _bto[:10]]), use_container_width=True, hide_index=True)
+                    _bb = _bto[0]
+                    st.caption(f"Top setting: **{_bb['lookback_days']}-day band, entry at "
+                               f"≤{_bb['entry_pct']:.0f}% / ≥{100-_bb['entry_pct']:.0f}%** — "
+                               f"₹{_bb['expectancy']:,.0f}/trade. Beware over-fitting: prefer a "
+                               f"setting that also holds on a different pair and period.")
+            st.caption("Walk-forward with **no lookahead** (each band uses only prior bars). "
+                       "Entry needs edge ≥1.5× cost; exit at the band mid or the time stop. "
+                       "Historical bid/ask isn't available, so friction is charged flat.")
 
     st.caption("Spread = far-month − near-month price (₹/kg). All-time min/max persists in "
                "your gist; the background cron keeps it gap-free 24/7.")

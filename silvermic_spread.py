@@ -183,6 +183,20 @@ def pairwise_spreads(contracts: list[dict]) -> list[dict]:
     return spreads
 
 
+def pair_symbols(min_days: int = _TRADEABLE_MIN_DAYS) -> list[dict]:
+    """Tradeable pairs (label + both history symbols) WITHOUT any quote call, so the
+    backtest works when the market is closed."""
+    cands = [c for c in _candidate_contracts(_ist_today()) if c["dte"] > min_days][:4]
+    out = []
+    for i in range(len(cands)):
+        for j in range(i + 1, len(cands)):
+            near, far = cands[i], cands[j]
+            out.append({"label":     f"{far['label']} − {near['label']}",
+                        "near_hist": near["hist_sym"],
+                        "far_hist":  far["hist_sym"]})
+    return out
+
+
 def spread_history_daily(token: str, near_hist: str, far_hist: str,
                          days: int = 7) -> list[dict]:
     """Daily spread stats [{date, min, max, last}] from 15m history of both legs
