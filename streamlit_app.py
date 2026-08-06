@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.101"
-_APP_BUILD   = "06 Aug 2026 16:42"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.102"
+_APP_BUILD   = "06 Aug 2026 20:21"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3562,9 +3562,15 @@ def _render_spreads(token: str):
             _today_txt = (f"{_td['min']:,.0f} – {_td['max']:,.0f}"
                           if _td.get("min") is not None and _td.get("max") is not None else "—")
             # Friction check: does the expected reversion clear the real trading cost?
-            _wc = _sps.trade_worth_check(_cur, _sp.get("book_cost"), _mnv, _mxv)
+            _wc = _sps.trade_worth_check(_cur, _sp.get("book_cost"), _mnv, _mxv,
+                                         charges=_sp.get("charges"))
             if _wc["verdict"] == "UNKNOWN":
                 _cost_txt = "— book unknown"
+                # Never present a tradeable idea when the cost can't be computed:
+                # "edge 0× cost → full size" is exactly how a friction-losing trade
+                # gets recommended.
+                if _idea.startswith(("🟢", "🔴")):
+                    _idea = "🚫 Cost unknown — can't judge this trade"
             else:
                 _cost_txt = {
                     "GOOD":    f"✅ {_wc['ratio']}× — edge ₹{_wc['edge']:,.0f} / cost ₹{_wc['cost']:,.0f}",

@@ -93,15 +93,31 @@ def load_master(force: bool = False) -> dict:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if not force and _master_cache["day"] == today and _master_cache["data"]:
         return _master_cache["data"]
+    import os, tempfile
+    disk = os.path.join(tempfile.gettempdir(), "mcx_sym_master.json")
     try:
         with urllib.request.urlopen(_MASTER_URL, timeout=30) as r:
             data = json.loads(r.read().decode())
         _master_cache.update({"day": today, "data": data})
+        try:                              # keep a copy so a bad fetch isn't fatal
+            with open(disk, "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
         logger.info("MCX symbol master loaded: %d symbols", len(data))
         return data
     except Exception as e:
-        logger.warning("symbol master fetch failed: %s", e)
-        return _master_cache.get("data") or {}
+        logger.warning("symbol master fetch failed (%s) — falling back to cache", e)
+        if _master_cache.get("data"):
+            return _master_cache["data"]
+        try:                              # yesterday's copy beats no scan at all
+            with open(disk) as f:
+                data = json.load(f)
+            logger.info("using on-disk symbol master (%d symbols)", len(data))
+            _master_cache.update({"day": today, "data": data})
+            return data
+        except Exception:
+            return {}
 
 
 def list_futures(commodity: str, min_dte: int = 11, limit: int = 4,

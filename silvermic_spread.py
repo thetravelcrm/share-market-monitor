@@ -152,11 +152,27 @@ def tradeable_contracts(token: str, min_days: int = _TRADEABLE_MIN_DAYS) -> list
             c["ask"] = float(q.get("ask", 0) or 0) if q else 0.0
             out.append(c)
     out.sort(key=lambda c: c["expiry"])
+    out = out[:4]
+    # fyers.quotes often returns no bid/ask for MCX, which leaves every row costed
+    # as "book unknown". The depth endpoint always has the ladder, so use it to fill
+    # the touch for anything the quote didn't price.
+    missing = [c["quote_sym"] for c in out if not (c["bid"] and c["ask"])]
+    if missing:
+        try:
+            from fyers_fetcher import get_depth
+            dep = get_depth(missing, token)
+            for c in out:
+                d = dep.get(c["quote_sym"])
+                if d and d.get("bids") and d.get("asks"):
+                    c["bid"] = float(d["bids"][0]["price"])
+                    c["ask"] = float(d["asks"][0]["price"])
+        except Exception as e:
+            _slog.warning("depth fallback for bid/ask failed: %s", e)
     # ALL Zerodha-tradeable contracts (up to the 4 live expiries). The near leg
     # drops at dte<=_TRADEABLE_MIN_DAYS (safety buffer before Zerodha's final-week
     # block); illiquid far-pair combos are handled by the Cost-vs-Edge gate, which
     # marks them unpayable rather than hiding them.
-    return out[:4]
+    return out
 
 
 def pairwise_spreads(contracts: list[dict]) -> list[dict]:
@@ -179,6 +195,12 @@ def pairwise_spreads(contracts: list[dict]) -> list[dict]:
             if all(near.get(k, 0) > 0 for k in ("bid", "ask")) and \
                all(far.get(k, 0) > 0 for k in ("bid", "ask")):
                 sp["book_cost"] = round((far["ask"] - far["bid"]) + (near["ask"] - near["bid"]), 2)
+                try:      # exact charges (contract-note verified), 1 kg/lot
+                    import mcx_costs as _mcc
+                    sp["charges"] = round(
+                        _mcc.spread_round_trip_charges(near["price"], far["price"]), 2)
+                except Exception:
+                    pass
             spreads.append(sp)
     return spreads
 
@@ -275,7 +297,8 @@ def band_age_days(rec: dict) -> float | None:
 
 
 def trade_worth_check(spread_now: float, book_cost: float | None,
-                      band_min: float | None, band_max: float | None) -> dict:
+                      band_min: float | None, band_max: float | None,
+                      charges: float | None = None) -> dict:
     """Is a mean-reversion trade on this pair worth its friction RIGHT NOW?
 
     Expected capture = distance from the current spread to the band midpoint (the
@@ -285,7 +308,7 @@ def trade_worth_check(spread_now: float, book_cost: float | None,
     Returns {edge, cost, ratio, verdict: 'GOOD'|'THIN'|'NO_EDGE'|'UNKNOWN'}."""
     if book_cost is None or band_min is None or band_max is None or band_max <= band_min:
         return {"verdict": "UNKNOWN"}
-    cost = book_cost + EST_CHARGES_RT
+    cost = book_cost + (EST_CHARGES_RT if charges is None else charges)
     mid  = (band_min + band_max) / 2
     edge = abs(spread_now - mid)
     ratio = edge / cost if cost > 0 else 0.0
