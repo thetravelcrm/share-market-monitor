@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.100"
-_APP_BUILD   = "05 Aug 2026 22:48"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.101"
+_APP_BUILD   = "06 Aug 2026 16:42"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4205,7 +4205,8 @@ with tab_scanner:
             } for r in _rows_sc]), use_container_width=True, hide_index=True, height=420)
             st.caption("**Edge/Cost** decides *whether* to trade (unit-free, so it compares "
                        "fairly across commodities): edge (distance to band mid) ÷ cost (both "
-                       "legs' live bid-ask + ~0.03% all-in charges). **Return on margin** "
+                       "legs' book walked for your lot size + exact charges). "
+                       "**Return on margin** "
                        "decides *which* to trade — ₹ edge ÷ capital required, so a ₹30k-margin "
                        "silver spread and a ₹450k-margin crude spread compare honestly. "
                        "₹ figures use Zerodha's published lot multipliers; **Margin ₹ is the "
