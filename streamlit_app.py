@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.104"
-_APP_BUILD   = "06 Aug 2026 21:01"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.105"
+_APP_BUILD   = "06 Aug 2026 21:32"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4245,17 +4245,21 @@ with tab_scanner:
                                for a in _live_al))
             else:
                 st.caption("No alerts armed yet.")
-            _reach = [r for r in _rows_sc if r.get("reachable")]
-            if not _reach:
-                st.caption("No scanned pair can reach 3× cost even at its band extreme, "
-                           "so there is no level worth alerting on. Try more lots (charges "
-                           "per lot fall) or a commodity with a wider band.")
-            else:
-                st.caption(f"Levels below are the **exact prices at which the pair becomes a "
-                           f"genuine 3× setup** at {int(_sc_lots)} lot(s), computed from its "
-                           f"band mid and real cost. Pairs that can never reach 3× are hidden. "
-                           f"Watched every ~5s by the cloud watcher — same Slack channel as "
-                           f"your other alerts.")
+            _reach = _rows_sc            # every pair is settable — you choose the level
+            _n_ok = sum(1 for r in _rows_sc if r.get("reachable"))
+            if True:
+                st.caption(f"Pre-filled with the price at which each pair becomes a genuine "
+                           f"**3× setup** at {int(_sc_lots)} lot(s) (band mid ± 3× real cost). "
+                           f"Where that level sits outside the band it's marked — such a pair "
+                           f"can't currently pay its friction, so its box is pre-filled with "
+                           f"the **band edge** instead; edit any value you like. Watched every "
+                           f"~5s by the cloud watcher, same Slack channel as your other alerts.")
+                if _n_ok == 0:
+                    st.info("ℹ️ At today's costs **no SILVER100 pair can reach 3× even at its "
+                            "band extreme** — the books widened (cost ₹57–87/lot vs ₹49–67 "
+                            "earlier). Alerting at the band edge is still useful: it tells you "
+                            "when the spread reaches an extreme, and you can re-check the "
+                            "edge/cost then, since costs move with the book.")
                 import silvermic_spread as _sps_a
                 try:
                     _acfg_s = _sps_a.get_alert_config()
@@ -4271,16 +4275,23 @@ with tab_scanner:
                 for r in _reach:
                     _c = _acfg_s.get(r["key"]) or {}
                     _k1, _k2, _k3 = st.columns([2, 1, 1])
-                    _k1.markdown(f"**{r['commodity']} {r['pair']}**  \nnow {r['spread']:,.2f} "
-                                 f"· band {r['band_min']:,.0f}–{r['band_max']:,.0f}")
+                    _k1.markdown(
+                        f"**{r['commodity']} {r['pair']}**  \nnow {r['spread']:,.2f} · band "
+                        f"{r['band_min']:,.0f}–{r['band_max']:,.0f}"
+                        + ("  ·  ✅ can reach 3×" if r.get("reachable")
+                           else f"  ·  ⚠️ max {((r['band_max']-r['band_min'])/2)/r['cost']:.1f}×"
+                                if r.get("cost") else ""))
+                    # 3x level if it's inside the band; otherwise the band edge
+                    _dlo = (r["trigger_low"] if (r.get("reachable") and
+                            r.get("trigger_low") is not None) else r["band_min"])
+                    _dhi = (r["trigger_high"] if (r.get("reachable") and
+                            r.get("trigger_high") is not None) else r["band_max"])
                     _lo = _k2.text_input(
                         "LONG at ≤", key=f"scal_lo_{r['key']}",
-                        value=(f"{_c['low']:g}" if _c.get("low") is not None
-                               else f"{r['trigger_low']:g}"))
+                        value=(f"{_c['low']:g}" if _c.get("low") is not None else f"{_dlo:g}"))
                     _hi = _k3.text_input(
                         "SHORT at ≥", key=f"scal_hi_{r['key']}",
-                        value=(f"{_c['high']:g}" if _c.get("high") is not None
-                               else f"{r['trigger_high']:g}"))
+                        value=(f"{_c['high']:g}" if _c.get("high") is not None else f"{_dhi:g}"))
                     _new_s[r["key"]] = {"low": _sa_num(_lo), "high": _sa_num(_hi)}
                 if st.button("💾 Save these alerts", key="scal_save", type="primary"):
                     try:
