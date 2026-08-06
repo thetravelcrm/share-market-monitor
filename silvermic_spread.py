@@ -380,9 +380,27 @@ def _merge_states(remote: dict, local: dict) -> dict:
     return out
 
 
-def _save_state(state: dict) -> None:
+def _save_state(state: dict, keep_config: bool = True) -> None:
+    """Persist the shared state.
+
+    `keep_config=True` (the default) re-reads the CURRENTLY stored alert config just
+    before writing and keeps it. The app, the 5s watcher and the cron all write this
+    one gist file: a writer loads state, spends minutes folding min/max, then saves
+    the whole file — silently reverting any alert level the user set in between. That
+    is why alerts appeared not to survive. Routine writers now never carry a stale
+    config over the live one; set_alert_config/set_pnl_alert pass keep_config=False
+    because they ARE the authority for those keys."""
     try:
         import monitor_state
+        if keep_config:
+            try:
+                fresh = monitor_state.load(_STATE_FILE)
+                if fresh:
+                    for k in ("_alerts", "_pnl"):
+                        if fresh.get(k) is not None:
+                            state[k] = fresh[k]
+            except Exception as e:
+                _slog.warning("could not refresh alert config before save: %s", e)
         if _LOAD_FAILED:
             # Don't clobber the stored band with a state built from nothing: re-read
             # once and merge; if that read also fails, skip the gist write entirely.
@@ -473,8 +491,26 @@ def last_sample_info() -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def get_alert_config() -> dict:
-    """{pair_key: {"high": float|None, "low": float|None, fired_…}}."""
+    """{pair_key: {"high": float|None, "low": float|None, fired_…, saved_at}}."""
     return _load_state().get("_alerts") or {}
+
+
+def active_alerts() -> list[dict]:
+    """Every level currently stored, for display — so the user can SEE that alerts
+    survived rather than having to trust it."""
+    out = []
+    for key, c in (get_alert_config() or {}).items():
+        if c.get("high") is None and c.get("low") is None:
+            continue
+        near = key.split("|")[0]
+        far = key.split("|")[-1]
+        out.append({
+            "commodity": commodity_of(near) or "?",
+            "pair":      f"{contract_label(far)} − {contract_label(near)}",
+            "low":       c.get("low"), "high": c.get("high"),
+            "saved_at":  c.get("saved_at", ""),
+        })
+    return sorted(out, key=lambda r: (r["commodity"], r["pair"]))
 
 
 def set_alert_config(cfg: dict) -> None:
@@ -488,9 +524,10 @@ def set_alert_config(cfg: dict) -> None:
         if prev.get("high") != c.get("high") or prev.get("low") != c.get("low"):
             entry["fired_high"] = False
             entry["fired_low"]  = False
+        entry["saved_at"] = datetime.now(timezone.utc).isoformat()
         alerts[key] = entry
     state["_alerts"] = alerts
-    _save_state(state)
+    _save_state(state, keep_config=False)      # this call IS the authority
 
 
 def check_spread_alerts(spreads: list[dict]) -> list[dict]:
@@ -625,8 +662,9 @@ def set_pnl_alert(profit, loss) -> None:
     if prev.get("profit") != profit or prev.get("loss") != loss:
         entry["fired_profit"] = False
         entry["fired_loss"]   = False
+    entry["saved_at"] = datetime.now(timezone.utc).isoformat()
     state["_pnl"] = entry
-    _save_state(state)
+    _save_state(state, keep_config=False)      # this call IS the authority
 
 
 def check_pnl_alert(total_pl: float) -> list[dict]:

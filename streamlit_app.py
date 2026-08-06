@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.103"
-_APP_BUILD   = "06 Aug 2026 20:56"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.104"
+_APP_BUILD   = "06 Aug 2026 21:01"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4230,6 +4230,21 @@ with tab_scanner:
 
             # ── 🔔 Slack alerts on scanner pairs (watched 24/7 by the 5s watcher) ──
             st.markdown("##### 🔔 Slack alerts — get pinged when a pair becomes tradeable")
+            # Show what is ACTUALLY stored, so persistence is visible rather than assumed.
+            try:
+                import silvermic_spread as _sps_live
+                _live_al = _sps_live.active_alerts()
+            except Exception:
+                _live_al = []
+            if _live_al:
+                st.success("✅ **Alerts currently armed (saved permanently, watched 24/7):** "
+                           + " · ".join(
+                               f"**{a['commodity']} {a['pair']}** "
+                               + (f"LONG≤{a['low']:g} " if a['low'] is not None else "")
+                               + (f"SHORT≥{a['high']:g}" if a['high'] is not None else "")
+                               for a in _live_al))
+            else:
+                st.caption("No alerts armed yet.")
             _reach = [r for r in _rows_sc if r.get("reachable")]
             if not _reach:
                 st.caption("No scanned pair can reach 3× cost even at its band extreme, "
