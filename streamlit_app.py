@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v7.102"
-_APP_BUILD   = "06 Aug 2026 20:21"   # auto-updated by pre-commit hook
+_APP_VERSION = "v7.103"
+_APP_BUILD   = "06 Aug 2026 20:56"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4227,6 +4227,55 @@ with tab_scanner:
                 with st.expander("📋 Copy-ready opportunity list"):
                     for r in _opps:
                         st.code(_mcs.alert_text(r), language=None)
+
+            # ── 🔔 Slack alerts on scanner pairs (watched 24/7 by the 5s watcher) ──
+            st.markdown("##### 🔔 Slack alerts — get pinged when a pair becomes tradeable")
+            _reach = [r for r in _rows_sc if r.get("reachable")]
+            if not _reach:
+                st.caption("No scanned pair can reach 3× cost even at its band extreme, "
+                           "so there is no level worth alerting on. Try more lots (charges "
+                           "per lot fall) or a commodity with a wider band.")
+            else:
+                st.caption(f"Levels below are the **exact prices at which the pair becomes a "
+                           f"genuine 3× setup** at {int(_sc_lots)} lot(s), computed from its "
+                           f"band mid and real cost. Pairs that can never reach 3× are hidden. "
+                           f"Watched every ~5s by the cloud watcher — same Slack channel as "
+                           f"your other alerts.")
+                import silvermic_spread as _sps_a
+                try:
+                    _acfg_s = _sps_a.get_alert_config()
+                except Exception:
+                    _acfg_s = {}
+                def _sa_num(x):
+                    try:
+                        x = str(x).replace(",", "").strip()
+                        return float(x) if x else None
+                    except Exception:
+                        return None
+                _new_s: dict = {}
+                for r in _reach:
+                    _c = _acfg_s.get(r["key"]) or {}
+                    _k1, _k2, _k3 = st.columns([2, 1, 1])
+                    _k1.markdown(f"**{r['commodity']} {r['pair']}**  \nnow {r['spread']:,.2f} "
+                                 f"· band {r['band_min']:,.0f}–{r['band_max']:,.0f}")
+                    _lo = _k2.text_input(
+                        "LONG at ≤", key=f"scal_lo_{r['key']}",
+                        value=(f"{_c['low']:g}" if _c.get("low") is not None
+                               else f"{r['trigger_low']:g}"))
+                    _hi = _k3.text_input(
+                        "SHORT at ≥", key=f"scal_hi_{r['key']}",
+                        value=(f"{_c['high']:g}" if _c.get("high") is not None
+                               else f"{r['trigger_high']:g}"))
+                    _new_s[r["key"]] = {"low": _sa_num(_lo), "high": _sa_num(_hi)}
+                if st.button("💾 Save these alerts", key="scal_save", type="primary"):
+                    try:
+                        _sps_a.set_alert_config(_new_s)
+                        st.success(f"Saved {len(_new_s)} pair(s). The 5-second watcher now "
+                                   f"follows them 24/7 — you'll get one Slack message per "
+                                   f"crossing, and it re-arms only after the spread comes "
+                                   f"back inside the band. You can stop watching the screen.")
+                    except Exception as _se:
+                        st.error(f"Save failed: {_se}")
 
 
 # ── Footer ────────────────────────────────────────────────────

@@ -513,13 +513,15 @@ def check_spread_alerts(spreads: list[dict]) -> list[dict]:
         if hi is not None:
             if val >= hi and not c.get("fired_high"):
                 c["fired_high"] = True; dirty = True
-                events.append({"label": sp["label"], "side": "HIGH", "level": hi, "value": val})
+                events.append({"label": sp["label"], "side": "HIGH", "level": hi,
+                               "value": val, "commodity": commodity_of(sp["key"].split("|")[0])})
             elif val < hi and c.get("fired_high"):
                 c["fired_high"] = False; dirty = True      # back inside → re-armed
         if lo is not None:
             if val <= lo and not c.get("fired_low"):
                 c["fired_low"] = True; dirty = True
-                events.append({"label": sp["label"], "side": "LOW", "level": lo, "value": val})
+                events.append({"label": sp["label"], "side": "LOW", "level": lo,
+                               "value": val, "commodity": commodity_of(sp["key"].split("|")[0])})
             elif val > lo and c.get("fired_low"):
                 c["fired_low"] = False; dirty = True
     if dirty:
@@ -532,7 +534,7 @@ def check_spread_alerts(spreads: list[dict]) -> list[dict]:
 #  Live Fyers positions → spread pairs + P&L alerts
 # ─────────────────────────────────────────────────────────────
 
-_FUT_RE = re.compile(r"MCX:([A-Z]+?)(\d\d)([A-Z]{3})FUT$")
+_FUT_RE = re.compile(r"MCX:([A-Z][A-Z0-9]*?)(\d\d)([A-Z]{3})FUT$")
 _MON_NUM = {m.upper(): i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
 
@@ -541,6 +543,12 @@ def contract_label(symbol: str) -> str:
     """'MCX:SILVERMIC27FEBFUT' -> 'Feb-27' (unknown formats pass through)."""
     m = _FUT_RE.match(symbol or "")
     return f"{m.group(3).title()}-{m.group(2)}" if m else (symbol or "")
+
+
+def commodity_of(symbol: str) -> str:
+    """'MCX:SILVER10026AUGFUT' -> 'SILVER100' ('' if unparseable)."""
+    m = _FUT_RE.match(symbol or "")
+    return m.group(1) if m else ""
 
 
 def _sym_order(symbol: str) -> tuple:
@@ -674,13 +682,29 @@ def watcher_persist(pending: dict) -> None:
     _save_state(state)
 
 
+def alert_symbols() -> list[tuple[str, str, str]]:
+    """[(key, near_sym, far_sym)] for every pair that currently has a level set —
+    lets the 5s watcher follow scanner pairs (SILVER100, CRUDEOILM…) too, not just
+    SILVERMIC, since alert keys are already "<near>|<far>" symbol pairs."""
+    out = []
+    for key, c in (get_alert_config() or {}).items():
+        if c.get("high") is None and c.get("low") is None:
+            continue
+        parts = key.split("|")
+        if len(parts) == 2 and parts[0].startswith("MCX:"):
+            out.append((key, parts[0], parts[1]))
+    return out
+
+
 def alert_text(ev: dict) -> str:
     """Slack message for a crossing event (shared by app + cron)."""
     dirn = "ABOVE" if ev["side"] == "HIGH" else "BELOW"
     hint = ("RICH — idea: SHORT spread (sell far · buy near)" if ev["side"] == "HIGH"
             else "CHEAP — idea: LONG spread (buy far · sell near)")
-    return (f"📐 SPREAD ALERT — SILVERMIC {ev['label']}: ₹{ev['value']:,.0f} crossed "
-            f"{dirn} your ₹{ev['level']:,.0f} · {hint}")
+    com = ev.get("commodity") or "SILVERMIC"
+    fmt = ",.2f" if abs(ev["value"]) < 1000 else ",.0f"    # small spreads need decimals
+    return (f"📐 SPREAD ALERT — {com} {ev['label']}: ₹{ev['value']:{fmt}} crossed "
+            f"{dirn} your ₹{ev['level']:{fmt}} · {hint}")
 
 
 def persisted_minmax() -> dict:

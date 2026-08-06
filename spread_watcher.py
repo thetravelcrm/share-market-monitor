@@ -112,7 +112,12 @@ def main() -> int:
 
         spreads: list[dict] = []
         try:
-            quotes = sps.quote_many(syms, token)
+            # Any pair with a level set is watched — including scanner commodities
+            # (SILVER100, CRUDEOILM…), not just SILVERMIC.
+            extra = [p for p in sps.alert_symbols()
+                     if p[1] not in syms or p[2] not in syms]
+            quotes = sps.quote_many(
+                list(dict.fromkeys(syms + [s for _k, a, b in extra for s in (a, b)])), token)
             priced = []
             for c in contracts:
                 q = quotes.get(c["quote_sym"])
@@ -120,6 +125,14 @@ def main() -> int:
                     priced.append({**c, "price": round(q["last_price"], 2)})
             if len(priced) >= 2:
                 spreads = sps.pairwise_spreads(priced)
+            for key, near_s, far_s in extra:
+                qn, qf = quotes.get(near_s), quotes.get(far_s)
+                if qn and qf and qn.get("last_price") and qf.get("last_price"):
+                    spreads.append({
+                        "key":   key,
+                        "label": f"{sps.contract_label(far_s)} − {sps.contract_label(near_s)}",
+                        "spread": round(qf["last_price"] - qn["last_price"], 2),
+                    })
         except Exception as e:
             log.warning("sample failed: %s", e)
 

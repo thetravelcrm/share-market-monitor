@@ -243,7 +243,12 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
             edge_inr = None if units is None else edge * units
             roi = (None if (edge_inr is None or not margin_spread)
                    else edge_inr / margin_spread * 100)
+            need = 3.0 * cost if cost else None      # 3x cost, in price units
             rows.append({
+                "trigger_low":  None if need is None else round(mid - need, 2),
+                "trigger_high": None if need is None else round(mid + need, 2),
+                "reachable":    bool(need is not None and (rng / 2) >= need),
+                "key":          f"{near['symbol']}|{far['symbol']}",
                 "commodity": commodity,
                 "pair":      f"{far['label']} − {near['label']}",
                 "near_sym":  near["symbol"], "far_sym": far["symbol"],
