@@ -143,16 +143,49 @@ def list_futures(commodity: str, min_dte: int = 11, limit: int = 4,
     return out[:limit]
 
 
+# A 30-day band barely moves minute to minute, but re-fetching ~3,400 bars per
+# contract on every scan is what made scanning take minutes. Cache it.
+_HIST_TTL_SECS = 900
+_hist_cache: dict = {}
+
+
 def _history(token: str, symbol: str, days: int) -> pd.Series:
-    """Closing series (15m) for one contract; empty Series when unavailable."""
+    """Closing series (15m) for one contract; empty Series when unavailable.
+    Cached for 15 minutes — the band it feeds is a 30-day window."""
+    import time as _t
+    key = (symbol, days)
+    hit = _hist_cache.get(key)
+    if hit and (_t.time() - hit[0]) < _HIST_TTL_SECS:
+        return hit[1]
     from silvermic_continuous import _fetch_one
     now = datetime.now(timezone.utc)
     df = _fetch_one(symbol, token, "15",
                     (now - timedelta(days=days + 5)).strftime("%Y-%m-%d"),
                     now.strftime("%Y-%m-%d"))
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-    return df["Close"]
+    ser = pd.Series(dtype=float) if (df is None or df.empty) else df["Close"]
+    if not ser.empty:                      # never cache a failed fetch
+        _hist_cache[key] = (_t.time(), ser)
+    return ser
+
+
+def _history_many(token: str, symbols: list[str], days: int) -> dict:
+    """Fetch several contracts' history CONCURRENTLY. Sequential fetching of ~3,400
+    bars per contract was the reason a scan took minutes."""
+    import concurrent.futures as _cf
+    out: dict = {}
+    todo = [s for s in symbols]
+    if not todo:
+        return out
+    with _cf.ThreadPoolExecutor(max_workers=min(4, len(todo))) as ex:
+        futs = {ex.submit(_history, token, s, days): s for s in todo}
+        for f in _cf.as_completed(futs, timeout=120):
+            sym = futs[f]
+            try:
+                out[sym] = f.result()
+            except Exception as e:
+                logger.warning("history failed for %s: %s", sym, e)
+                out[sym] = pd.Series(dtype=float)
+    return out
 
 
 def _verdict(ratio: float) -> str:
@@ -172,7 +205,7 @@ def scan_commodity(token: str, commodity: str, lookback_days: int = 30,
     syms = [c["symbol"] for c in contracts]
     quotes = quote_many(syms, token)
     depth = get_depth(syms, token)          # ladder, so `lots` can be priced honestly
-    hist = {c["symbol"]: _history(token, c["symbol"], lookback_days) for c in contracts}
+    hist = _history_many(token, [c["symbol"] for c in contracts], lookback_days)
 
     rows = []
     for i in range(len(contracts)):

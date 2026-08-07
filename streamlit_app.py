@@ -831,8 +831,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v8.06"
-_APP_BUILD   = "07 Aug 2026 15:31"   # auto-updated by pre-commit hook
+_APP_VERSION = "v8.07"
+_APP_BUILD   = "07 Aug 2026 15:41"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4138,7 +4138,7 @@ with tab_scanner:
             if not _sc_sel:
                 st.warning("Pick at least one commodity.")
             else:
-                _bar = st.progress(0.0, text="Starting…")
+                _bar = st.progress(0.0, text="Fetching contracts, books and 30d history…")
                 try:
                     _sc_rows = _mcs.scan(
                         _sc_token, commodities=_sc_sel, lookback_days=int(_sc_lb),
@@ -4155,8 +4155,9 @@ with tab_scanner:
 
         _rows_sc = st.session_state.get("sc_rows")
         if _rows_sc is None:
-            st.info("Pick commodities and hit **Scan now**. A 6-commodity scan pulls "
-                    "history for ~24 contracts, so give it up to a minute.")
+            st.info("Pick commodities and hit **Scan now**. The first scan pulls 30 days of "
+                    "history for every contract (a few seconds per commodity); history is "
+                    "cached for 15 minutes, so re-scans are near-instant.")
         elif not _rows_sc:
             st.warning("Nothing scored — the symbol master or Fyers history may be "
                        "unreachable. Check the app logs and retry.")
