@@ -822,8 +822,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v8.04"
-_APP_BUILD   = "06 Aug 2026 21:33"   # auto-updated by pre-commit hook
+_APP_VERSION = "v8.05"
+_APP_BUILD   = "07 Aug 2026 15:19"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -3614,7 +3614,19 @@ def _render_spreads(token: str):
             st.info("😴 **No trade right now** — no pair is both at a band extreme "
                     "(≥5-day band) and worth ≥1.5× its cost. Doing nothing is the "
                     "correct position; the alerts will ping Slack when that changes.")
-        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame(_rows), use_container_width=True, hide_index=True,
+            column_config={
+                "Pair":                st.column_config.TextColumn(width="medium"),
+                "Now (₹)":             st.column_config.TextColumn(width="small"),
+                "Today (₹)":           st.column_config.TextColumn(width="small"),
+                "Min (₹)":             st.column_config.TextColumn(width="small"),
+                "Max (₹)":             st.column_config.TextColumn(width="small"),
+                "Range (₹)":           st.column_config.TextColumn(width="small"),
+                "Position":            st.column_config.TextColumn(width="medium"),
+                "Cost vs Edge":        st.column_config.TextColumn(width="medium"),
+                "Mean-Reversion Idea": st.column_config.TextColumn(width="large"),
+            })
         # Heartbeat: prove the record is alive even when the all-time band hasn't
         # moved for days (min/max only change on a NEW extreme — that's by design).
         try:
@@ -4083,32 +4095,36 @@ with tab_scanner:
     else:
         import mcx_scanner as _mcs
         import zerodha_margins as _zmg
-        _scm1, _scm2 = st.columns([1, 3])
-        _sc_budget = _scm1.number_input("Max margin per leg (₹)", 1000, 2_000_000,
-                                        int(_mcs.MARGIN_BUDGET_DEFAULT), step=5000,
-                                        key="sc_budget",
-                                        help="Single-leg NRML margin from Zerodha. A spread "
-                                             "holds 2 legs, so capital is up to 2× this "
-                                             "(less with MCX's calendar-spread benefit).")
-        _sc_keep, _sc_drop = _mcs.affordable(float(_sc_budget))
-        _scm2.caption(
-            f"**Within budget ({len(_sc_keep)}):** " +
-            ", ".join(f"{c} ₹{_zmg.margin_per_lot(c):,.0f}" for c in _sc_keep[:10]) +
-            (f" …+{len(_sc_keep)-10} more" if len(_sc_keep) > 10 else "") +
-            (f"  ·  **excluded ({len(_sc_drop)}):** " + ", ".join(_sc_drop[:6]) +
-             ("…" if len(_sc_drop) > 6 else "") if _sc_drop else ""))
-        _sc1, _sc2, _sc3 = st.columns([3, 1, 1])
-        _sc_default = [c for c in _mcs.LIQUID_DEFAULT if c in _sc_keep] or _sc_keep[:6]
-        _sc_sel = _sc1.multiselect("Commodities", _mcs.ALL_COMMODITIES,
-                                   default=_sc_default, key="sc_sel")
-        _sc_lb = _sc2.number_input("Band lookback (d)", 10, 90, 30, step=5, key="sc_lb")
-        _sc_lots = _sc3.number_input("Lots you'd trade", 1, 50, 1, step=1, key="sc_lots",
+        # ── Settings: four equal numeric inputs on one row, then the picker ──
+        _sq1, _sq2, _sq3, _sq4 = st.columns(4)
+        _sc_budget = _sq1.number_input("Max margin / leg (₹)", 1000, 2_000_000,
+                                       int(_mcs.MARGIN_BUDGET_DEFAULT), step=5000,
+                                       key="sc_budget",
+                                       help="Single-leg NRML margin from Zerodha. A spread "
+                                            "holds 2 legs, so capital is up to 2× this "
+                                            "(less with MCX's calendar-spread benefit).")
+        _sc_lb = _sq2.number_input("Band lookback (days)", 10, 90, 30, step=5, key="sc_lb",
+                                   help="How much history builds the band. Under ~180 days "
+                                        "cannot see seasonal patterns (natural gas).")
+        _sc_lots = _sq3.number_input("Lots you'd trade", 1, 50, 1, step=1, key="sc_lots",
                                      help="Cost is priced by WALKING the order book for "
                                           "this size — a 10-lot fill pays far more than "
-                                          "the top-of-book spread. Setups the book can't "
-                                          "fill are dropped from opportunities.")
-        _sc_dte = st.number_input("Skip contracts expiring within (days)", 1, 40, 11,
-                                  step=1, key="sc_dte")
+                                          "the top-of-book spread.")
+        _sc_dte = _sq4.number_input("Skip expiry within (days)", 1, 40, 11, step=1,
+                                    key="sc_dte",
+                                    help="Drop contracts this close to expiry — thin books "
+                                         "and roll risk.")
+        _sc_keep, _sc_drop = _mcs.affordable(float(_sc_budget))
+        _sc_default = [c for c in _mcs.LIQUID_DEFAULT if c in _sc_keep] or _sc_keep[:6]
+        _sc_sel = st.multiselect("Commodities to scan", _mcs.ALL_COMMODITIES,
+                                 default=_sc_default, key="sc_sel")
+        with st.expander(f"💰 What fits ₹{int(_sc_budget):,}/leg — "
+                         f"{len(_sc_keep)} in, {len(_sc_drop)} out"):
+            _mc1, _mc2 = st.columns(2)
+            _mc1.markdown("**Within budget**\n\n" + "\n".join(
+                f"- {c} — ₹{_zmg.margin_per_lot(c):,.0f}/leg" for c in _sc_keep) or "—")
+            _mc2.markdown("**Too expensive**\n\n" + ("\n".join(
+                f"- {c} — ₹{_zmg.margin_per_lot(c):,.0f}/leg" for c in _sc_drop) or "—"))
         if st.button("🔎 Scan now", key="sc_run", type="primary"):
             if not _sc_sel:
                 st.warning("Pick at least one commodity.")
@@ -4185,30 +4201,40 @@ with tab_scanner:
                 st.info("😴 **Nothing worth trading** — no pair is at a band extreme with "
                         "an edge that pays its friction. This is the normal state.")
             _icon = {"GOOD": "✅", "THIN": "⚠️", "NO_EDGE": "❌", "UNKNOWN": "—"}
-            st.dataframe(pd.DataFrame([{
-                "Commodity": r["commodity"],
-                "Pair":      r["pair"],
-                "Near exp":  f"{r['near_dte']}d",
-                "Spread":    f"{r['spread']:,.2f}",
-                "Band":      (f"{r['band_min']:,.0f} – {r['band_max']:,.0f} "
-                              f"({r['band_days']:.0f}d)"
-                              + (" ⚠️bad data" if r.get("suspect") else "")),
-                "Position":  f"{r['pos']}% · {r['bias']}",
-                "Edge/Cost": (f"{_icon.get(r['verdict'],'')} {r['ratio']}×"
-                              if r["ratio"] is not None else "— no book"),
-                "Edge ₹/lot": (f"{r['edge_inr']:,.0f}" if r.get("edge_inr") is not None
-                               else f"{r['edge']:,.2f}/unit"),
-                "Cost ₹/lot": (f"{r['cost_inr']:,.0f}" if r.get("cost_inr") is not None
-                               else "—"),
-                "Margin ₹":  (f"{r['margin_spread']:,.0f}" if r.get("margin_spread")
-                              else "—"),
-                "Return on margin": (f"{r['roi_pct']}%" if r.get("roi_pct") is not None
-                                     else "—"),
-                "Can fill?": ("—" if not r.get("depth_used")
-                              else ("✅" if (r.get("fillable_lots") or 0) >= r.get("lots", 1)
-                                    else f"❌ only {r.get('fillable_lots', 0)}")),
-                "Idea":      r["idea"],
-            } for r in _rows_sc]), use_container_width=True, hide_index=True, height=420)
+            st.dataframe(
+                pd.DataFrame([{
+                    "Pair":     f"{r['commodity']} {r['pair']}",
+                    "Exp":      f"{r['near_dte']}d",
+                    "Spread":   f"{r['spread']:,.2f}",
+                    "Band":     (f"{r['band_min']:,.0f}–{r['band_max']:,.0f} "
+                                 f"({r['band_days']:.0f}d)"
+                                 + (" ⚠️" if r.get("suspect") else "")),
+                    "Position": f"{r['pos']}% {r['bias']}",
+                    "Edge/Cost": (f"{_icon.get(r['verdict'],'')} {r['ratio']}×"
+                                  if r["ratio"] is not None else "— no book"),
+                    "₹ edge / cost": (
+                        f"{r['edge_inr']:,.0f} / {r['cost_inr']:,.0f}"
+                        if r.get("edge_inr") is not None and r.get("cost_inr") is not None
+                        else f"{r['edge']:,.2f}/unit"),
+                    "ROI": (f"{r['roi_pct']}%" if r.get("roi_pct") is not None else "—"),
+                    "Fill": ("—" if not r.get("depth_used")
+                             else ("✅" if (r.get("fillable_lots") or 0) >= r.get("lots", 1)
+                                   else f"❌{r.get('fillable_lots', 0)}")),
+                    "Idea":  r["idea"],
+                } for r in _rows_sc]),
+                use_container_width=True, hide_index=True, height=380,
+                column_config={
+                    "Pair":          st.column_config.TextColumn(width="medium"),
+                    "Exp":           st.column_config.TextColumn(width="small"),
+                    "Spread":        st.column_config.TextColumn(width="small"),
+                    "Band":          st.column_config.TextColumn(width="small"),
+                    "Position":      st.column_config.TextColumn(width="small"),
+                    "Edge/Cost":     st.column_config.TextColumn(width="small"),
+                    "₹ edge / cost": st.column_config.TextColumn(width="small"),
+                    "ROI":           st.column_config.TextColumn(width="small"),
+                    "Fill":          st.column_config.TextColumn(width="small"),
+                    "Idea":          st.column_config.TextColumn(width="large"),
+                })
             st.caption("**Edge/Cost** decides *whether* to trade (unit-free, so it compares "
                        "fairly across commodities): edge (distance to band mid) ÷ cost (both "
                        "legs' book walked for your lot size + exact charges). "
@@ -4276,11 +4302,13 @@ with tab_scanner:
                     _c = _acfg_s.get(r["key"]) or {}
                     _k1, _k2, _k3 = st.columns([2, 1, 1])
                     _k1.markdown(
-                        f"**{r['commodity']} {r['pair']}**  \nnow {r['spread']:,.2f} · band "
-                        f"{r['band_min']:,.0f}–{r['band_max']:,.0f}"
-                        + ("  ·  ✅ can reach 3×" if r.get("reachable")
-                           else f"  ·  ⚠️ max {((r['band_max']-r['band_min'])/2)/r['cost']:.1f}×"
-                                if r.get("cost") else ""))
+                        f"**{r['commodity']} {r['pair']}**  \n"
+                        f"<span style='font-size:12px;color:#8b93a7'>now {r['spread']:,.2f} · "
+                        f"band {r['band_min']:,.0f}–{r['band_max']:,.0f} · "
+                        + ("✅ can reach 3×" if r.get("reachable")
+                           else (f"⚠️ max {((r['band_max']-r['band_min'])/2)/r['cost']:.1f}×"
+                                 if r.get("cost") else "cost unknown"))
+                        + "</span>", unsafe_allow_html=True)
                     # 3x level if it's inside the band; otherwise the band edge
                     _dlo = (r["trigger_low"] if (r.get("reachable") and
                             r.get("trigger_low") is not None) else r["band_min"])
