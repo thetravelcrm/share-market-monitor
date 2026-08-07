@@ -831,8 +831,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v8.07"
-_APP_BUILD   = "07 Aug 2026 15:41"   # auto-updated by pre-commit hook
+_APP_VERSION = "v8.08"
+_APP_BUILD   = "07 Aug 2026 17:14"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4290,12 +4290,18 @@ with tab_scanner:
                            f"can't currently pay its friction, so its box is pre-filled with "
                            f"the **band edge** instead; edit any value you like. Watched every "
                            f"~5s by the cloud watcher, same Slack channel as your other alerts.")
-                if _n_ok == 0:
-                    st.info("ℹ️ At today's costs **no SILVER100 pair can reach 3× even at its "
-                            "band extreme** — the books widened (cost ₹57–87/lot vs ₹49–67 "
-                            "earlier). Alerting at the band edge is still useful: it tells you "
-                            "when the spread reaches an extreme, and you can re-check the "
-                            "edge/cost then, since costs move with the book.")
+                _ok_names = [f"{r['commodity']} {r['pair']}" for r in _rows_sc
+                             if r.get("reachable")]
+                if _ok_names:
+                    st.success(f"**Pre-filled and ready to save: {', '.join(_ok_names)}** — the "
+                               f"only pair(s) here whose edge can pay 3× its friction. The rest "
+                               f"are deliberately left blank: arming them would ping you into "
+                               f"trades that lose money after costs. Just press Save.")
+                else:
+                    st.info("ℹ️ At today's costs **no pair can reach 3× even at its band "
+                            "extreme**, so nothing is pre-filled — arming any of these would "
+                            "alert you into trades that can't pay their friction. Type a level "
+                            "manually if you want to watch one anyway.")
                 import silvermic_spread as _sps_a
                 try:
                     _acfg_s = _sps_a.get_alert_config()
@@ -4319,17 +4325,21 @@ with tab_scanner:
                            else (f"⚠️ max {((r['band_max']-r['band_min'])/2)/r['cost']:.1f}×"
                                  if r.get("cost") else "cost unknown"))
                         + "</span>", unsafe_allow_html=True)
-                    # 3x level if it's inside the band; otherwise the band edge
-                    _dlo = (r["trigger_low"] if (r.get("reachable") and
-                            r.get("trigger_low") is not None) else r["band_min"])
-                    _dhi = (r["trigger_high"] if (r.get("reachable") and
-                            r.get("trigger_high") is not None) else r["band_max"])
+                    # Pre-fill ONLY where the level is genuinely worth acting on: the
+                    # pair must be able to pay 3x its friction. Arming a pair that
+                    # tops out at 2x just generates alerts for losing trades — and a
+                    # band-edge default can already be breached (fires instantly).
+                    # Blank = not watched; every box stays editable.
+                    _dlo = r["trigger_low"] if r.get("reachable") else None
+                    _dhi = r["trigger_high"] if r.get("reachable") else None
                     _lo = _k2.text_input(
-                        "LONG at ≤", key=f"scal_lo_{r['key']}",
-                        value=(f"{_c['low']:g}" if _c.get("low") is not None else f"{_dlo:g}"))
+                        "LONG at ≤", key=f"scal_lo_{r['key']}", placeholder="not watched",
+                        value=(f"{_c['low']:g}" if _c.get("low") is not None
+                               else (f"{_dlo:g}" if _dlo is not None else "")))
                     _hi = _k3.text_input(
-                        "SHORT at ≥", key=f"scal_hi_{r['key']}",
-                        value=(f"{_c['high']:g}" if _c.get("high") is not None else f"{_dhi:g}"))
+                        "SHORT at ≥", key=f"scal_hi_{r['key']}", placeholder="not watched",
+                        value=(f"{_c['high']:g}" if _c.get("high") is not None
+                               else (f"{_dhi:g}" if _dhi is not None else "")))
                     _new_s[r["key"]] = {"low": _sa_num(_lo), "high": _sa_num(_hi)}
                 if st.button("💾 Save these alerts", key="scal_save", type="primary"):
                     try:
