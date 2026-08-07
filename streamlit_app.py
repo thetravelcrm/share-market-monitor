@@ -36,7 +36,16 @@ html, body, [class*="css"] {
     background: #0a0e27;
     color: #e0e6ff;
 }
-.block-container { padding: 0 !important; max-width: 100% !important; }
+/* Breathing room on both sides; scales down on narrow screens so nothing clips. */
+.block-container {
+    padding: 0 clamp(14px, 2.5vw, 44px) 36px !important;
+    max-width: 100% !important;
+}
+/* The header band stays edge-to-edge despite the container padding. */
+.dash-header {
+    margin-left:  calc(-1 * clamp(14px, 2.5vw, 44px));
+    margin-right: calc(-1 * clamp(14px, 2.5vw, 44px));
+}
 section[data-testid="stSidebar"] > div { background: #141829; }
 
 /* ── Header ── */
@@ -822,8 +831,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v8.05"
-_APP_BUILD   = "07 Aug 2026 15:19"   # auto-updated by pre-commit hook
+_APP_VERSION = "v8.06"
+_APP_BUILD   = "07 Aug 2026 15:31"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
