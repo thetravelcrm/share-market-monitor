@@ -831,8 +831,8 @@ if auto_refresh:
 # ═══════════════════════════════════════════════════════════════
 #  App version (must be defined before header and pipeline runner)
 # ═══════════════════════════════════════════════════════════════
-_APP_VERSION = "v8.08"
-_APP_BUILD   = "07 Aug 2026 17:14"   # auto-updated by pre-commit hook
+_APP_VERSION = "v8.09"
+_APP_BUILD   = "07 Aug 2026 17:31"   # auto-updated by pre-commit hook
 
 # ═══════════════════════════════════════════════════════════════
 #  Header
@@ -4341,7 +4341,30 @@ with tab_scanner:
                         value=(f"{_c['high']:g}" if _c.get("high") is not None
                                else (f"{_dhi:g}" if _dhi is not None else "")))
                     _new_s[r["key"]] = {"low": _sa_num(_lo), "high": _sa_num(_hi)}
-                if st.button("💾 Save these alerts", key="scal_save", type="primary"):
+                _sv1, _sv2 = st.columns([1, 1])
+                if _sv2.button("🔔 Send a test alert to Slack", key="scal_test",
+                               help="Sends a real message through the exact spread-alert "
+                                    "path (same text builder, token and channel), so a "
+                                    "success here proves the whole chain works."):
+                    _tcfg = st.session_state.get("sm_cfg") or _sm_config_load()
+                    _tbot = _tcfg.get("slack_bot_token", "")
+                    _tchan = _tcfg.get("slack_channel", "") or "#general"
+                    import notifier as _ntf3
+                    _demo = dict(_rows_sc[0])
+                    _txt = _sps_a.alert_text({
+                        "commodity": _demo["commodity"], "label": _demo["pair"],
+                        "side": "LOW", "level": _demo["band_min"],
+                        "value": _demo["band_min"]})
+                    if not _tbot:
+                        st.error("No Slack token configured — add SLACK_BOT_TOKEN in "
+                                 "Settings → Secrets.")
+                    elif _ntf3.send_slack_text(_tbot, _tchan, "🧪 TEST — " + _txt):
+                        st.success(f"✅ Sent to **{_tchan}** — check Slack. The live alerts "
+                                   f"use this same path, so they will arrive too.")
+                    else:
+                        st.error(f"Slack rejected it: `{_ntf3.LAST_ERROR}` — fix that and "
+                                 f"real alerts won't arrive either.")
+                if _sv1.button("💾 Save these alerts", key="scal_save", type="primary"):
                     try:
                         _sps_a.set_alert_config(_new_s)
                         st.success(f"Saved {len(_new_s)} pair(s). The 5-second watcher now "

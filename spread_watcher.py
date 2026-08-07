@@ -86,6 +86,7 @@ def main() -> int:
     pending: dict = {}          # key -> {label, min:(v,ts), max:(v,ts)}
     t_contracts = t_config = t_persist = t_pnl = 0.0
     samples = alerts_sent = 0
+    _last_extra = [None]        # log the watched alert set only when it changes
     from fyers_fetcher import get_positions
 
     while time.time() < deadline:
@@ -116,6 +117,10 @@ def main() -> int:
             # (SILVER100, CRUDEOILM…), not just SILVERMIC.
             extra = [p for p in sps.alert_symbols()
                      if p[1] not in syms or p[2] not in syms]
+            if extra != _last_extra[0]:
+                _last_extra[0] = extra
+                log.info("watching %d alert pair(s) beyond SILVERMIC: %s",
+                         len(extra), [k for k, _a, _b in extra] or "none")
             quotes = sps.quote_many(
                 list(dict.fromkeys(syms + [s for _k, a, b in extra for s in (a, b)])), token)
             priced = []
